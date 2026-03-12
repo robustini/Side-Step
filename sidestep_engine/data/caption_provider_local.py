@@ -13,6 +13,7 @@ Call :func:`unload_model` after a batch to free VRAM.
 from __future__ import annotations
 
 import gc
+import importlib.util
 import logging
 from pathlib import Path
 from typing import Any, Optional
@@ -60,6 +61,15 @@ def _pick_dtype() -> torch.dtype:
     return torch.float16
 
 
+def _pick_attention_backend() -> Optional[str]:
+    """Pick the most memory-efficient attention backend available."""
+    if not torch.cuda.is_available():
+        return None
+    if importlib.util.find_spec("flash_attn") is not None:
+        return "flash_attention_2"
+    return None
+
+
 def _load_model(tier: str) -> None:
     """Load model + processor into module-level cache.
 
@@ -83,15 +93,19 @@ def _load_model(tier: str) -> None:
 
     model_path = _resolve_model_path()
     compute_dtype = _pick_dtype()
+    attention_backend = _pick_attention_backend()
     logger.info(
-        "Loading Qwen2.5-Omni-7B (tier=%s, dtype=%s) from %s …",
-        tier, compute_dtype, model_path,
+        "Loading Qwen2.5-Omni-7B (tier=%s, dtype=%s, attn=%s) from %s …",
+        tier, compute_dtype, attention_backend or "sdpa/default", model_path,
     )
 
     load_kwargs: dict[str, Any] = {
         "device_map": "auto",
         "trust_remote_code": True,
+        "low_cpu_mem_usage": True,
     }
+    if attention_backend:
+        load_kwargs["attn_implementation"] = attention_backend
 
     if tier == "8-10gb":
         bnb_config = BitsAndBytesConfig(
@@ -199,6 +213,10 @@ def generate_caption(
         },
     ]
 
+    inputs = None
+    text_ids = None
+    decoded = None
+    audios = images = videos = None
     try:
         text_template = _processor.apply_chat_template(
             conversation, add_generation_prompt=True, tokenize=False,
@@ -215,7 +233,14 @@ def generate_caption(
             padding=True,
             use_audio_in_video=False,
         )
-        inputs = inputs.to(_model.device)
+
+        # Qwen Omni expects runtime tensors on the same device as the model's
+        # input embedding / first parameter. Leaving them on CPU causes
+        # wrapper_CUDA__index_select mismatches; moving them wholesale to that
+        # primary device keeps the original working behavior while still letting
+        # Accelerate own the rest of the model placement.
+        model_device = next(_model.parameters()).device
+        inputs = inputs.to(model_device)
 
         with torch.inference_mode():
             text_ids = _model.generate(
@@ -246,6 +271,13 @@ def generate_caption(
         )
         return None
     except Exception as exc:
-        logger.error("Local caption generation failed for '%s - %s': %s",
-                     artist, title, exc)
+        logger.error(
+            "Local caption generation failed for '%s - %s': %s",
+            artist, title, exc,
+        )
         return None
+    finally:
+        del inputs, text_ids, decoded, audios, images, videos
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
