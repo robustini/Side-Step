@@ -10,6 +10,7 @@ caption providers.  Custom prompts are loaded from
 from __future__ import annotations
 
 import ast
+import json
 import re
 import logging
 from pathlib import Path
@@ -150,9 +151,12 @@ def _maybe_parse_mapping_text(text: str) -> dict[str, Any] | None:
     if not (stripped.startswith("{") and stripped.endswith("}")):
         return None
     try:
-        parsed = ast.literal_eval(stripped)
+        parsed = json.loads(stripped)
     except Exception:
-        return None
+        try:
+            parsed = ast.literal_eval(stripped)
+        except Exception:
+            return None
     return parsed if isinstance(parsed, dict) else None
 
 

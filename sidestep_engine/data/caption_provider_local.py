@@ -62,12 +62,16 @@ def _pick_dtype() -> torch.dtype:
 
 
 def _pick_attention_backend() -> Optional[str]:
-    """Pick the most memory-efficient attention backend available."""
+    """Pick the most memory-efficient supported attention backend available."""
     if not torch.cuda.is_available():
         return None
-    if importlib.util.find_spec("flash_attn") is not None:
-        return "flash_attention_2"
-    return None
+    if importlib.util.find_spec("flash_attn") is None:
+        return None
+    try:
+        major, _minor = torch.cuda.get_device_capability()
+    except Exception:
+        return None
+    return "flash_attention_2" if major >= 8 else None
 
 
 def _load_model(tier: str) -> None:
@@ -278,6 +282,3 @@ def generate_caption(
         return None
     finally:
         del inputs, text_ids, decoded, audios, images, videos
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()

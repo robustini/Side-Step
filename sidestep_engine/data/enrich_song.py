@@ -7,53 +7,14 @@ for a single audio file.  Called in a loop by the wizard orchestrator.
 
 from __future__ import annotations
 
-import ast
 import logging
 import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from sidestep_engine.data.caption_config import parse_structured_response
+from sidestep_engine.data.structured_helpers import extract_caption_from_blob, looks_like_mapping_blob
 
 logger = logging.getLogger(__name__)
-
-
-def _looks_like_mapping_blob(value: Any) -> bool:
-    s = str(value or '').strip()
-    if not s:
-        return False
-    low = s.lower()
-    return (
-        (s.startswith('{') and ("'caption'" in s or '"caption"' in s or "'ok'" in s or '"ok"' in s))
-        or low.startswith('caption: {')
-    )
-
-
-def _extract_caption_from_blob(value: Any) -> str:
-    if isinstance(value, dict):
-        parsed = value
-    else:
-        s = str(value or '').strip()
-        if not s:
-            return ''
-        if s.lower().startswith('caption:'):
-            s = s.split(':', 1)[1].strip()
-        parsed = None
-        try:
-            parsed = ast.literal_eval(s)
-        except Exception:
-            parsed = None
-        if not isinstance(parsed, dict):
-            structured = parse_structured_response(s)
-            cand = str(structured.get('caption') or '').strip()
-            if cand and not _looks_like_mapping_blob(cand):
-                return cand
-            return ''
-    structured = parse_structured_response(parsed)
-    cand = str(structured.get('caption') or '').strip()
-    if cand and not _looks_like_mapping_blob(cand):
-        return cand
-    return ''
 
 
 def _normalize_generated_fields(fields: Dict[str, Any]) -> Dict[str, str]:
@@ -62,8 +23,8 @@ def _normalize_generated_fields(fields: Dict[str, Any]) -> Dict[str, str]:
         if value is None:
             continue
         if key == 'caption':
-            clean_caption = _extract_caption_from_blob(value) if _looks_like_mapping_blob(value) else str(value).strip()
-            if clean_caption and not _looks_like_mapping_blob(clean_caption):
+            clean_caption = extract_caption_from_blob(value) if looks_like_mapping_blob(value) else str(value).strip()
+            if clean_caption and not looks_like_mapping_blob(clean_caption):
                 normalized[key] = clean_caption
             continue
         if key == 'genre' and isinstance(value, (list, tuple, set)):
