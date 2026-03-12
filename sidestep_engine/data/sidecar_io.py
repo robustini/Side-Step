@@ -20,10 +20,10 @@ from sidestep_engine.data.structured_helpers import extract_caption_from_blob, l
 logger = logging.getLogger(__name__)
 
 # Keys written to sidecars (order preserved in output)
-_FIELD_ORDER = ("caption", "genre", "bpm", "key", "signature")
+_FIELD_ORDER = ("caption", "genre", "bpm", "key", "signature", "is_instrumental")
 
 # Fields that the AI pipeline can generate
-GENERATED_FIELDS = {"caption", "lyrics", "genre", "bpm", "key", "signature"}
+GENERATED_FIELDS = {"caption", "lyrics", "genre", "bpm", "key", "signature", "is_instrumental"}
 
 
 def read_sidecar(path: Path) -> Dict[str, str]:

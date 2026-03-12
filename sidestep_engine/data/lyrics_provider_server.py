@@ -231,6 +231,10 @@ def _extract_payload_text(payload: Any) -> str:
                 if text:
                     return text
             return _reflow_text_block(val)
+        if val is not None and not isinstance(val, str):
+            text = _extract_payload_text(val)
+            if text:
+                return text
 
     for key in ("segments", "lyrics_segments", "transcript_segments"):
         text = _join_segment_lines(_iter_segments(payload.get(key)))
@@ -244,6 +248,24 @@ def _extract_payload_text(payload: Any) -> str:
                 return text
     return ""
 
+
+
+
+def _runtime_error_from_requests(exc: Exception) -> RuntimeError | None:
+    module = exc.__class__.__module__
+    if not module.startswith("requests"):
+        return None
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            details = response.text
+        except Exception:
+            details = str(exc)
+        return RuntimeError(f"HTTP {getattr(response, 'status_code', '?')}: {details}")
+    request = getattr(exc, "request", None)
+    if request is not None:
+        return RuntimeError(str(exc))
+    return RuntimeError(str(exc))
 
 def fetch_lyrics_from_server(
     audio_path: str,
@@ -274,6 +296,11 @@ def fetch_lyrics_from_server(
         raise RuntimeError(str(exc.reason or exc)) from exc
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"Malformed JSON response: {exc}") from exc
+    except Exception as exc:
+        converted = _runtime_error_from_requests(exc)
+        if converted is not None:
+            raise converted from exc
+        raise
     text = _extract_payload_text(payload)
     if not text:
         raise RuntimeError("Server returned no usable lyrics")

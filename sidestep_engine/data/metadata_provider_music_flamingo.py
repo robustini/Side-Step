@@ -899,6 +899,7 @@ def _normalize_fields(obj: Dict[str, Any]) -> Dict[str, str]:
     key_scale = obj.get("key_scale") or obj.get("keyscale") or obj.get("key")
     signature = _clean_timesig(obj.get("timesignature") or obj.get("time_signature") or obj.get("signature"))
     language = _clean_language(obj.get("vocal_language") or obj.get("detected_language") or obj.get("language") or obj.get("lang"))
+    instrumental = obj.get("is_instrumental")
     if caption and str(caption).strip() and not _looks_like_json_text(str(caption).strip()):
         clean_caption = _sentenceish_caption(str(caption).strip())
         if clean_caption and not _looks_generic_caption(clean_caption):
@@ -913,6 +914,10 @@ def _normalize_fields(obj: Dict[str, Any]) -> Dict[str, str]:
         result["signature"] = signature
     if language:
         result["language"] = language
+    if isinstance(instrumental, bool):
+        result["is_instrumental"] = "true" if instrumental else "false"
+    elif instrumental is not None and str(instrumental).strip().lower() in {"true", "false"}:
+        result["is_instrumental"] = str(instrumental).strip().lower()
     return {k: v for k, v in result.items() if str(v).strip()}
 
 
@@ -1004,7 +1009,7 @@ def _structured_field_count(fields: Dict[str, str]) -> int:
 
 def _merge_structured_fields(primary: Dict[str, str], secondary: Dict[str, str]) -> Dict[str, str]:
     merged = dict(primary or {})
-    for key in ("bpm", "key", "signature", "language", "genre"):
+    for key in ("bpm", "key", "signature", "language", "genre", "is_instrumental"):
         cand = str((secondary or {}).get(key) or "").strip()
         if cand and not str(merged.get(key) or "").strip():
             merged[key] = cand
@@ -1020,7 +1025,7 @@ def _merge_music_flamingo_fields(primary: Dict[str, str], secondary: Dict[str, s
     secondary = dict(secondary or {})
 
     # Keep stable structured fields from pass 1, but fill holes from pass 2.
-    for key in ("bpm", "key", "signature", "language"):
+    for key in ("bpm", "key", "signature", "language", "is_instrumental"):
         if not str(merged.get(key) or "").strip() and str(secondary.get(key) or "").strip():
             merged[key] = str(secondary.get(key)).strip()
 

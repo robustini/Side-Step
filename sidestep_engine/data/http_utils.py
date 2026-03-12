@@ -17,9 +17,15 @@ def validate_http_url(url: str) -> str:
     return value
 
 
+def _escape_multipart_filename(name: str) -> str:
+    s = str(name or "").replace("\r", " ").replace("\n", " ")
+    s = s.replace("\\", "\\\\").replace('"', r'\"')
+    return s
+
+
 def build_multipart(fields: dict[str, str], file_field_name: str, file_path: str) -> tuple[bytes, str]:
     boundary = "----sidestep-" + uuid.uuid4().hex
-    filename = Path(file_path).name
+    filename = _escape_multipart_filename(Path(file_path).name)
     with open(file_path, "rb") as f:
         data = f.read()
     parts: list[bytes] = []
