@@ -267,7 +267,7 @@ class TrainingMonitorScreen(Screen):
             # ---- build training config ------------------------------------
             training_config = TrainingConfigV2(
                 checkpoint_dir=self.config.get("checkpoint_dir", "./checkpoints"),
-                model_variant=self.config.get("variant", "turbo"),
+                model_variant=self.config.get("variant", "base"),
                 dataset_dir=self.config.get("dataset_dir", ""),
                 output_dir=self.config.get("output_dir", ""),
                 max_epochs=self.config.get("epochs", 100),

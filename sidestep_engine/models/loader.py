@@ -14,6 +14,7 @@ from __future__ import annotations
 import gc
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -196,6 +197,21 @@ def load_decoder_for_training(
             f"flash_attention_2 unavailable: {fa2_reason}. Falling back to sdpa/eager."
         )
 
+    # Older ACE-Step checkpoints have ``from acestep.models import ...``
+    # in their modeling files.  ``transformers.check_imports()`` validates
+    # that every top-level import is resolvable before loading.  The
+    # pre-1.0 alpha accidentally satisfied this because an ``acestep/``
+    # working directory existed in the project root.  Register a
+    # lightweight stub so both old and new checkpoints load cleanly.
+    # The actual model code uses relative imports at runtime.
+    import types as _types
+    if "acestep" not in sys.modules:
+        _stub = _types.ModuleType("acestep")
+        _stub.__path__ = []  # make it a package
+        sys.modules["acestep"] = _stub
+    if "acestep.models" not in sys.modules:
+        sys.modules["acestep.models"] = _types.ModuleType("acestep.models")
+
     model = None
     last_err: Optional[Exception] = None
 
@@ -211,6 +227,25 @@ def load_decoder_for_training(
             logger.info("[OK] Model loaded with attn_implementation=%s", attn_impl)
             _print_attn_backend_decision(_selected_attn_status(attn_impl))
             break
+        except (ImportError, EnvironmentError) as exc:
+            # Missing-package errors (e.g. "acestep" from an outdated
+            # checkpoint) are not attention-backend issues -- surface
+            # a clear message instead of cycling through backends.
+            err_text = str(exc)
+            if "packages that were not found" in err_text or "No module named" in err_text:
+                raise RuntimeError(
+                    f"The model files in {model_dir} require a Python package "
+                    f"that is not installed.\n\n"
+                    f"  Original error: {err_text}\n\n"
+                    f"This usually means the checkpoint files are outdated. "
+                    f"Please re-download the ACE-Step checkpoint (the upstream "
+                    f"project removed this dependency in newer releases).\n"
+                    f"If the issue persists, check that 'vector_quantize_pytorch' "
+                    f"and 'einops' are installed in your environment."
+                ) from exc
+            last_err = exc
+            next_backend = attn_candidates[idx + 1] if idx + 1 < len(attn_candidates) else None
+            _log_attn_fallback(attn_impl, exc, next_backend)
         except Exception as exc:
             last_err = exc
             next_backend = attn_candidates[idx + 1] if idx + 1 < len(attn_candidates) else None

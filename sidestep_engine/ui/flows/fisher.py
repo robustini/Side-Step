@@ -58,7 +58,7 @@ def _step_model(a: dict) -> None:
         kind="dim",
     )
 
-    ask_model_and_checkpoint(a, default_variant="turbo", prompt_base_model=False)
+    ask_model_and_checkpoint(a, default_variant="base", prompt_base_model=False)
     a["_turbo_selected"] = is_turbo(a)
     ask_dataset_folder(a, allow_audio=True)
 

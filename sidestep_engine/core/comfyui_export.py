@@ -296,6 +296,14 @@ def convert_peft_to_comfyui(
     # -- Save -----------------------------------------------------------------
     if output_path is None:
         output_path = str(adapter_dir.parent / (adapter_dir.name + "_comfyui.safetensors"))
+    else:
+        output_candidate = Path(output_path)
+        if output_candidate.is_dir():
+            output_candidate = output_candidate / f"{adapter_dir.name}_comfyui.safetensors"
+        output_path = str(output_candidate)
+
+    output_parent = Path(output_path).parent
+    output_parent.mkdir(parents=True, exist_ok=True)
 
     save_file(comfy_sd, output_path)
     file_size_mb = os.path.getsize(output_path) / (1024 * 1024)

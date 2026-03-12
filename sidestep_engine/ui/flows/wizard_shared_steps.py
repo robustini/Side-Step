@@ -158,9 +158,9 @@ def prompt_base_model(model_name: str) -> str:
     return menu(
         "Which base model was this fine-tune trained from?",
         [
-            ("turbo", "Turbo (8-step accelerated)"),
-            ("base", "Base (full diffusion)"),
+            ("base", "Base (full diffusion — recommended)"),
             ("sft", "SFT (supervised fine-tune)"),
+            ("turbo", "Turbo (8-step accelerated)"),
         ],
         default=1,
         allow_back=True,
@@ -174,7 +174,7 @@ def prompt_base_model(model_name: str) -> str:
 def ask_model_and_checkpoint(
     answers: dict,
     *,
-    default_variant: str = "turbo",
+    default_variant: str = "base",
     prompt_base_model: bool = True,
 ) -> None:
     """Prompt for checkpoint directory and model variant.

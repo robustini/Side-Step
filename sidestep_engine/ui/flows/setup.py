@@ -61,7 +61,7 @@ def _step_checkpoint(data: dict) -> None:
     """Ask for checkpoint directory and scan for models."""
     section("Model Checkpoints")
     print_rich("  Where are your model checkpoint folders?")
-    print_rich("  [dim](Each variant lives in its own subfolder, e.g. checkpoints/acestep-v15-turbo/)[/]\n")
+    print_rich("  [dim](Each variant lives in its own subfolder, e.g. checkpoints/acestep-v15-base/)[/]\n")
 
     default_ckpt = data.get("checkpoint_dir") or _smart_checkpoint_default()
     while True:
@@ -84,7 +84,7 @@ def _step_checkpoint(data: dict) -> None:
             break
         else:
             print_rich("  [yellow]No model directories found in that location.[/]")
-            print_rich("  [dim]Examples: acestep-v15-turbo, acestep-v15-base, acestep-v15-sft[/]")
+            print_rich("  [dim]Examples: acestep-v15-base, acestep-v15-sft, acestep-v15-turbo[/]")
             if not ask_bool("Try a different path?", default=True, allow_back=False):
                 print_rich("  [red]Setup requires at least one valid model directory.[/]")
                 raise KeyboardInterrupt

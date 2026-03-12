@@ -171,7 +171,7 @@ const WorkspaceSetup = (() => {
       card.innerHTML = `
         <div class="preset-card__name">${_e(p.name)} ${tag}</div>
         <div class="preset-card__desc">${_e(p.description || "")}</div>
-        <div class="preset-card__meta">${_e(p.adapter_type || "lora")} | r=${_e(p.rank || "?")} | lr=${_e(p.lr || "?")} | ${_e(p.epochs || "?")} epochs</div>
+        <div class="preset-card__meta">${_e(p.adapter_type || "lora")} | r=${_e(p.rank || "?")} | lr=${_e(p.learning_rate || "?")} | ${_e(p.epochs || "?")} epochs</div>
         <div class="preset-card__actions">
           <button class="btn btn--sm btn--primary preset-apply" data-name="${_e(p.name)}">Apply to Configure</button>
           ${!p.builtin ? '<button class="btn btn--sm btn--danger preset-delete" data-name="' + _e(p.name) + '">Delete</button>' : ""}
@@ -199,6 +199,8 @@ const WorkspaceSetup = (() => {
       weight_decay:"full-weight-decay", max_grad_norm:"full-max-grad-norm", seed:"full-seed", warmup_start_factor:"full-warmup-start-factor",
       cosine_eta_min_ratio:"full-cosine-eta-min", cosine_restarts_count:"full-cosine-restarts", ema_decay:"full-ema-decay", val_split:"full-val-split",
       adaptive_timestep_ratio:"full-adaptive-timestep", save_best_every_n_steps:"full-save-best-every-n-steps",
+      target_loss:"full-target-loss", target_loss_floor:"full-target-loss-floor",
+      target_loss_warmup:"full-target-loss-warmup", target_loss_smoothing:"full-target-loss-smoothing",
       timestep_mu:"full-timestep-mu", timestep_sigma:"full-timestep-sigma", num_workers:"full-num-workers", prefetch_factor:"full-prefetch-factor",
       bias:"full-bias", attention_type:"full-attention-type", lokr_linear_dim:"full-lokr-dim", lokr_linear_alpha:"full-lokr-alpha",
       lokr_factor:"full-lokr-factor", loha_linear_dim:"full-loha-dim", loha_linear_alpha:"full-loha-alpha", loha_factor:"full-loha-factor",
@@ -327,7 +329,7 @@ const WorkspaceSetup = (() => {
     on("click", "#btn-validate-gemini", async () => {
       const key = $("settings-gemini-key")?.value;
       if (!key || key.includes("\u2022")) { showToast("Enter a Gemini API key first", "warn"); return; }
-      const model = $("settings-gemini-model")?.value || "gemini-2.0-flash";
+      const model = $("settings-gemini-model")?.value || "gemini-2.5-flash";
       showToast("Validating Gemini key...", "info");
       try {
         const r = await API.validateApiKey("gemini", key, { model });
@@ -375,10 +377,23 @@ const WorkspaceSetup = (() => {
       const ckptDir = $("settings-checkpoint-dir")?.value || Defaults.get("settings-checkpoint-dir") || "checkpoints";
       const models = await API.fetchModels(ckptDir);
       const variants = (models.models || []).map(m => m.name || m);
+      // Priority: base > sft > turbo when current value doesn't match any scanned model
+      const _pickDefault = (variants, current) => {
+        if (variants.includes(current)) return current;
+        const lv = variants.map(v => v.toLowerCase());
+        const baseIdx = lv.findIndex(v => v.includes("base"));
+        if (baseIdx >= 0) return variants[baseIdx];
+        const sftIdx = lv.findIndex(v => v.includes("sft"));
+        if (sftIdx >= 0) return variants[sftIdx];
+        const turboIdx = lv.findIndex(v => v.includes("turbo"));
+        if (turboIdx >= 0) return variants[turboIdx];
+        return variants[0] || current;
+      };
       document.querySelectorAll(".model-picker").forEach((sel) => {
         const current = sel.value;
         const savedDefault = sel.dataset.default;
-        BatchDOM.setOptions(sel, variants, current);
+        const preferred = _pickDefault(variants, current);
+        BatchDOM.setOptions(sel, variants, preferred);
         if (savedDefault) sel.dataset.default = savedDefault;
       });
       const det = $("ez-checkpoint-detect");
