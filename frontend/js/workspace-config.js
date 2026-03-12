@@ -47,6 +47,11 @@ const WorkspaceConfig = (() => {
       ["full-dataset-repeats", "rev-repeats", v => v + "\u00d7"],
       ["full-grad-ckpt-ratio", "rev-ckpt-mode", v => parseFloat(v) > 0 ? "ratio " + v : "off"],
       ["full-chunk-duration", "rev-chunk", v => v === "0" ? "off" : v + "s"],
+      ["full-max-latent-length", "rev-chunk", v => {
+        const mode = _v("full-crop-mode", "full");
+        if (mode === "latent") return v === "0" ? "off" : ("max_latent_length=" + v);
+        return _v("full-chunk-duration", "0") === "0" ? "off" : (_v("full-chunk-duration", "0") + "s");
+      }],
       ["full-optimizer", "rev-optimizer", v => v],
       ["full-scheduler", "rev-scheduler", v => v],
       ["full-weight-decay", "rev-weight-decay", v => v],
@@ -416,7 +421,10 @@ const WorkspaceConfig = (() => {
       snr_gamma: _v("full-snr-gamma", "5.0"), offload_encoder: _c("full-offload-encoder"),
       gradient_checkpointing: gradCkptEnabled,
       gradient_checkpointing_ratio: _v("full-grad-ckpt-ratio", "1.0"),
-      chunk_duration: _v("full-chunk-duration", "0"), chunk_decay_every: _v("full-chunk-decay-every", "10"),
+      crop_mode: _v("full-crop-mode", "full"),
+      chunk_duration: _v("full-chunk-duration", "0"),
+      max_latent_length: _v("full-max-latent-length", "0"),
+      chunk_decay_every: _v("full-chunk-decay-every", "10"),
       optimizer_type: _v("full-optimizer", "adamw8bit"), scheduler: _v("full-scheduler", "cosine"),
       scheduler_formula: _v("full-scheduler-formula", ""),
       device: _v("full-device", "auto"), precision: _v("full-precision", "auto"),
@@ -450,6 +458,16 @@ const WorkspaceConfig = (() => {
       cfg.persistent_workers = false;
     } else if (cfg.prefetch_factor === "" || cfg.prefetch_factor == null) {
       cfg.prefetch_factor = "2";
+    }
+
+    if (cfg.crop_mode === "latent") {
+      cfg.chunk_duration = "0";
+      if (!cfg.max_latent_length || Number(cfg.max_latent_length) <= 0) cfg.max_latent_length = "1500";
+    } else if (cfg.crop_mode === "seconds") {
+      cfg.max_latent_length = "0";
+    } else {
+      cfg.chunk_duration = "0";
+      cfg.max_latent_length = "0";
     }
 
     const logDir = _v("full-log-dir", "");

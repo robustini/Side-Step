@@ -388,6 +388,8 @@ def build_training_config(
         max_duration=_get(p, "max_duration", 0),
         normalize=_get(p, "normalize", "none"),
         chunk_duration=_get(p, "chunk_duration") or None,
+        max_latent_length=_get(p, "max_latent_length") or None,
+        crop_mode=_get(p, "crop_mode") or None,
         chunk_decay_every=_get(p, "chunk_decay_every", DEFAULT_CHUNK_DECAY_EVERY),
         dataset_repeats=_get(p, "dataset_repeats", DEFAULT_DATASET_REPEATS),
         max_steps=_get(p, "max_steps", DEFAULT_MAX_STEPS),

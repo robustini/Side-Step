@@ -892,27 +892,19 @@
               </div>
               <div class="form-row">
                 <div class="form-group">
-                  <label class="form-group__label">Chunk duration (0=off) <span class="help-icon" data-help="help-full-chunk">?</span></label>
-                  <input class="input has-default vram-input" type="number" id="full-chunk-duration" value="0" data-default="0" data-validate="gte:0 int">
-                  <div class="field-error"></div>
-                  <div class="field-warning" id="warn-chunk-short"></div>
-                  <div id="help-full-chunk" class="help-panel">
-                    <p><strong>Simple:</strong> Instead of training on the full-length audio, crops a random segment of this many seconds each step. Saves VRAM because the model processes shorter sequences.</p>
-                    <p>Set to 0 to use full-length audio (uses more VRAM). 60s is a good starting point if you need savings.</p>
-                    <span class="badge badge--vram">VRAM: 60s saves ~2-4 GB vs full-length</span>
-                    <span class="badge badge--quality">Quality: Short chunks may miss long-range structure</span>
-                  </div>
-                  <div class="hint">60s recommended if you need VRAM savings.</div>
-                </div>
-                <div class="form-group">
-                  <label class="form-group__label">Chunk decay interval <span class="help-icon" data-help="help-full-chunk-decay">?</span></label>
+                  <label class="form-group__label">Crop decay interval <span class="help-icon" data-help="help-full-chunk-decay">?</span></label>
                   <div id="help-full-chunk-decay" class="help-panel">
-                    <p><strong>Simple:</strong> Every N epochs, the chunk sampler gradually shifts which sections of each song it covers, ensuring the model eventually sees all parts of every track.</p>
-                    <p>0 = off (random chunks every step). 10 = decay coverage every 10 epochs.</p>
+                    <p><strong>Simple:</strong> Every N epochs, the crop sampler gradually shifts which sections of each song it covers, ensuring the model eventually sees all parts of every track.</p>
+                    <p>0 = off (random crop every step). 10 = decay coverage every 10 epochs.</p>
                   </div>
                   <input class="input has-default" type="number" id="full-chunk-decay-every" value="10" data-default="10" data-validate="gte:0 int">
                   <div class="field-error"></div>
-                  <div class="hint">Coverage decay epochs (0=off)</div>
+                  <div class="hint">Applies to chunk-seconds and max-latent crop modes.</div>
+                </div>
+                <div class="form-group" style="display:none;">
+                  <label class="form-group__label">Crop controls moved</label>
+                  <input class="input" type="text" value="Use Optimizer & Scheduler section" disabled>
+                  <div class="hint">Full / chunk-seconds / max-latent-length live there now.</div>
                 </div>
               </div>
             </div>
@@ -955,6 +947,42 @@
                     <option value="cosine_restarts">Cosine with restarts</option>
                     <option value="custom">Custom formula</option>
                   </select>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-group__label">Sequence crop mode <span class="help-icon" data-help="help-full-crop-mode">?</span></label>
+                  <div id="help-full-crop-mode" class="help-panel">
+                    <p><strong>Full sample:</strong> no crop. Highest context, highest VRAM.</p>
+                    <p><strong>Chunk by seconds:</strong> random moving crop based on audio seconds.</p>
+                    <p><strong>Max latent length:</strong> random moving crop based on latent frames.</p>
+                  </div>
+                  <select class="select vram-input" id="full-crop-mode">
+                    <option value="full" selected>Full sample (no crop)</option>
+                    <option value="seconds">Chunk by seconds</option>
+                    <option value="latent">Max latent length</option>
+                  </select>
+                </div>
+                <div class="form-group" id="crop-seconds-group" style="display:none;">
+                  <label class="form-group__label">Chunk duration (seconds) <span class="help-icon" data-help="help-full-chunk">?</span></label>
+                  <input class="input has-default vram-input" type="number" id="full-chunk-duration" value="0" data-default="0" data-validate="gte:0 int">
+                  <div class="field-error"></div>
+                  <div class="field-warning" id="warn-chunk-short"></div>
+                  <div id="help-full-chunk" class="help-panel">
+                    <p><strong>Simple:</strong> Crop a random moving segment of this many seconds each step.</p>
+                    <p>Set to 0 to disable. 60s is a common compromise when VRAM is tight.</p>
+                  </div>
+                  <div class="hint">Used only in <em>Chunk by seconds</em> mode.</div>
+                </div>
+                <div class="form-group" id="crop-latent-group" style="display:none;">
+                  <label class="form-group__label">Max latent length <span class="help-icon" data-help="help-full-max-latent">?</span></label>
+                  <input class="input has-default vram-input" type="number" id="full-max-latent-length" value="0" data-default="0" data-validate="gte:0 int">
+                  <div class="field-error"></div>
+                  <div id="help-full-max-latent" class="help-panel">
+                    <p><strong>Simple:</strong> Random moving crop measured directly in latent frames.</p>
+                    <p>Set 1500 for a common latent-crop setup.</p>
+                  </div>
+                  <div class="hint">Used only in <em>Max latent length</em> mode.</div>
                 </div>
               </div>
               <div class="form-group" id="scheduler-formula-group" style="display: none;">

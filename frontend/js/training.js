@@ -552,11 +552,12 @@ const Training = (() => {
 
     // Strip frontend-only keys and zero-means-off fields before sending to backend
     delete _config.steps_per_epoch;
-    // Only strip chunk_duration when zero (disabled).  chunk_decay_every=0
-    // is a valid user choice ("no coverage decay") and must be preserved.
+    delete _config.crop_mode;
+    // Only strip disabled crop fields; chunk_decay_every=0 is still a valid user choice.
     if (_config.chunk_duration !== undefined && (Number(_config.chunk_duration) === 0 || _config.chunk_duration === '0')) delete _config.chunk_duration;
-    // When chunking is disabled, chunk_decay_every is irrelevant — strip it too
-    if (!_config.chunk_duration && _config.chunk_decay_every !== undefined && (Number(_config.chunk_decay_every) === 0 || _config.chunk_decay_every === '0')) delete _config.chunk_decay_every;
+    if (_config.max_latent_length !== undefined && (Number(_config.max_latent_length) === 0 || _config.max_latent_length === '0')) delete _config.max_latent_length;
+    // When both crop modes are disabled, chunk_decay_every is irrelevant — strip it too
+    if (!_config.chunk_duration && !_config.max_latent_length && _config.chunk_decay_every !== undefined && (Number(_config.chunk_decay_every) === 0 || _config.chunk_decay_every === '0')) delete _config.chunk_decay_every;
 
     // Reset stop button state from previous run
     const stopBtn = $('btn-stop');
