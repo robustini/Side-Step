@@ -642,8 +642,8 @@ def _add_captions_args(parser: argparse.ArgumentParser) -> None:
     )
     g.add_argument(
         "--provider", type=str, default=None,
-        choices=["gemini", "openai", "local_8-10gb", "local_16gb"],
-        help="Caption provider: gemini, openai, local_8-10gb, local_16gb (default: from settings, or gemini)",
+        choices=["gemini", "openai", "local_8-10gb", "local_16gb", "music_flamingo", "lyrics_only", "none"],
+        help="Caption provider: gemini, openai, local_8-10gb, local_16gb, music_flamingo, lyrics_only, none (default: from settings, or gemini)",
     )
     g.add_argument(
         "--ai-model", "--model", type=str, default=None, dest="ai_model",
@@ -655,9 +655,20 @@ def _add_captions_args(parser: argparse.ArgumentParser) -> None:
         help="Merge policy for existing sidecars (default: fill_missing)",
     )
     g.add_argument(
+        "--lyrics-provider", type=str, default=None,
+        choices=["genius", "transcriber_server", "music_flamingo", "none"],
+        help="Lyrics provider: genius, transcriber_server, music_flamingo, none "
+             "(default: genius when --lyrics is on)",
+    )
+    g.add_argument(
         "--lyrics", action=argparse.BooleanOptionalAction, default=True,
-        help="Fetch lyrics from Genius (requires GENIUS_API_TOKEN or settings). "
+        help="Fetch lyrics (requires provider config). "
              "On by default; use --no-lyrics to skip",
+    )
+    g.add_argument(
+        "--metadata-provider", type=str, default=None,
+        choices=["music_flamingo", "none"],
+        help="Metadata provider for structured fields: music_flamingo, none (default: none)",
     )
     g.add_argument(
         "--default-artist", type=str, default="",
@@ -678,6 +689,18 @@ def _add_captions_args(parser: argparse.ArgumentParser) -> None:
     g.add_argument(
         "--genius-token", type=str, default=None,
         help="Genius API token (overrides env/settings)",
+    )
+    g.add_argument(
+        "--music-flamingo-url", type=str, default=None,
+        help="Music Flamingo server URL (overrides settings)",
+    )
+    g.add_argument(
+        "--transcriber-server-url", type=str, default=None,
+        help="Transcriber Server URL for lyrics (overrides settings)",
+    )
+    g.add_argument(
+        "--hf-token", type=str, default=None,
+        help="Hugging Face token for authenticated endpoints (overrides settings)",
     )
     g.add_argument(
         "--google-search", action="store_true", default=False,

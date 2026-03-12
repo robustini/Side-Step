@@ -67,6 +67,8 @@ _DEFAULTS: Dict[str, Any] = {
     "shift": 3.0,
     "num_inference_steps": 8,
     "chunk_duration": None,
+    "max_latent_length": None,
+    "crop_mode": None,
     "resume_from": None,
     "run_name": None,
     "log_dir": None,
@@ -108,8 +110,10 @@ _GROUPS_TEMPLATE: List[Tuple[str, List[Tuple[str, str]]]] = [
         ("gradient_checkpointing_ratio", "Checkpointing ratio"),
         ("offload_encoder", "Offload encoder"),
     ]),
-    ("Chunking", [
+    ("Sequence Cropping", [
+        ("crop_mode", "Crop mode"),
         ("chunk_duration", "Chunk duration (s)"),
+        ("max_latent_length", "Max latent length (frames)"),
         ("chunk_decay_every", "Coverage decay interval"),
     ]),
     ("Corrected Training", [

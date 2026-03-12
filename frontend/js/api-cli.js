@@ -90,6 +90,10 @@ const APICli = (() => {
       add('--chunk-duration', config.chunk_duration);
       addNonDefault('--chunk-decay-every', config.chunk_decay_every, '10');
     }
+    if (config.max_latent_length && config.max_latent_length !== '0') {
+      add('--max-latent-length', config.max_latent_length);
+      addNonDefault('--chunk-decay-every', config.chunk_decay_every, '10');
+    }
 
     add('--save-every', config.save_every); add('--log-every', config.log_every);
     addNonDefault('--log-heavy-every', config.log_heavy_every, '50');
@@ -97,6 +101,12 @@ const APICli = (() => {
     addNoBool('--save-best', config.save_best);
     if (config.save_best_after && config.save_best_after !== '0') add('--save-best-after', config.save_best_after);
     if (config.early_stop && config.early_stop !== '0') add('--early-stop-patience', config.early_stop);
+    if (config.target_loss && config.target_loss !== '0') {
+      add('--target-loss', config.target_loss);
+      addNonDefault('--target-loss-floor', config.target_loss_floor, '0.01');
+      addNonDefault('--target-loss-warmup', config.target_loss_warmup, '50');
+      addNonDefault('--target-loss-smoothing', config.target_loss_smoothing, '0.98');
+    }
     if (config.resume_from) add('--resume-from', config.resume_from);
     if (config.resume_from && config.strict_resume === false) parts.push('--no-strict-resume');
     if (config.log_dir) add('--log-dir', config.log_dir);

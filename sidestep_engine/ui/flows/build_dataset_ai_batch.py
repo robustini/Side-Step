@@ -165,17 +165,71 @@ def build_lyrics_fn(
     """Build the lyrics fetcher callable from wizard answers.
 
     Args:
-        answers: Wizard answer dict with ``_genius_token``.
+        answers: Wizard answer dict with ``_lyrics_provider`` and
+            provider-specific keys.
 
     Returns:
         A callable ``(artist, title) -> str|None``, or ``None`` if
         lyrics fetching is skipped.
     """
-    token = answers.get("_genius_token")
-    if not token:
+    lyrics_provider = answers.get("_lyrics_provider", "genius")
+
+    if lyrics_provider == "genius":
+        token = answers.get("_genius_token")
+        if not token:
+            return None
+        from sidestep_engine.data.lyrics_provider_genius import fetch_lyrics
+        return lambda artist, title: fetch_lyrics(artist, title, token)
+
+    if lyrics_provider == "transcriber_server":
+        server_url = answers.get("_transcriber_server_url", "")
+        if not server_url:
+            return None
+        from sidestep_engine.data.lyrics_provider_server import fetch_lyrics_from_server
+        return lambda artist, title: fetch_lyrics_from_server(
+            "", server_url=server_url, artist=artist, title=title,
+        )
+
+    if lyrics_provider == "music_flamingo":
+        server_url = answers.get("_music_flamingo_url", "")
+        hf_token = answers.get("_hf_token", "")
+        if not server_url:
+            return None
+        from sidestep_engine.data.lyrics_provider_music_flamingo import fetch_lyrics_from_music_flamingo
+        return lambda artist, title: fetch_lyrics_from_music_flamingo(
+            "", server_url=server_url, artist=artist, title=title,
+            hf_token=hf_token or None,
+        )
+
+    return None
+
+
+def build_metadata_fn(
+    answers: dict,
+) -> Optional[Callable[[Path], Optional[dict]]]:
+    """Build the metadata provider callable from wizard answers.
+
+    Args:
+        answers: Wizard answer dict with ``caption_provider`` and
+            Music Flamingo settings.
+
+    Returns:
+        A callable ``(audio_path) -> dict|None``, or ``None`` if
+        metadata generation is skipped.
+    """
+    provider = answers.get("caption_provider", "skip")
+    if provider != "music_flamingo":
         return None
-    from sidestep_engine.data.lyrics_provider_genius import fetch_lyrics
-    return lambda artist, title: fetch_lyrics(artist, title, token)
+    server_url = answers.get("_music_flamingo_url", "")
+    hf_token = answers.get("_hf_token", "")
+    if not server_url:
+        return None
+    from sidestep_engine.data.metadata_provider_music_flamingo import (
+        fetch_music_flamingo_metadata,
+    )
+    return lambda audio_path: fetch_music_flamingo_metadata(
+        str(audio_path), server_url=server_url, hf_token=hf_token or None,
+    )
 
 
 def build_audio_analyze_fn(
@@ -221,6 +275,7 @@ def run_batch(answers: dict) -> Dict[str, int]:
 
     caption_fn = build_caption_fn(answers)
     lyrics_fn = build_lyrics_fn(answers)
+    metadata_fn = build_metadata_fn(answers)
     audio_analyze_fn = build_audio_analyze_fn(answers)
 
     stats: Dict[str, int] = {"written": 0, "skipped": 0, "failed": 0}
@@ -231,6 +286,7 @@ def run_batch(answers: dict) -> Dict[str, int]:
             default_artist=answers.get("default_artist", ""),
             caption_fn=caption_fn,
             lyrics_fn=lyrics_fn,
+            metadata_fn=metadata_fn,
             audio_analyze_fn=audio_analyze_fn,
             policy=answers.get("policy", "fill_missing"),
         )

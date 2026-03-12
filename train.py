@@ -708,9 +708,12 @@ def _run_captions(args) -> int:
         get_gemini_api_key,
         get_gemini_model,
         get_genius_api_token,
+        get_hf_token,
+        get_music_flamingo_url,
         get_openai_api_key,
         get_openai_base_url,
         get_openai_model,
+        get_transcriber_server_url,
     )
     from sidestep_engine.data.enrich_song import enrich_one, parse_filename
 
@@ -770,9 +773,39 @@ def _run_captions(args) -> int:
         def caption_fn(title, artist, lyrics_excerpt, audio_path):
             return _local_cap(title, artist, audio_path=audio_path,
                               lyrics_excerpt=lyrics_excerpt, tier=tier)
+    elif provider in ("music_flamingo", "lyrics_only", "none"):
+        caption_fn = None
 
+    # -- Metadata provider (Music Flamingo) ----------------------------------
+    metadata_fn = None
+    meta_provider = getattr(args, "metadata_provider", None) or "none"
+    if meta_provider == "music_flamingo" or provider == "music_flamingo":
+        flamingo_url = getattr(args, "music_flamingo_url", None) or get_music_flamingo_url() or ""
+        hf_token = getattr(args, "hf_token", None) or get_hf_token() or ""
+        if flamingo_url:
+            from sidestep_engine.data.metadata_provider_music_flamingo import (
+                fetch_music_flamingo_metadata as _gen_meta,
+            )
+
+            def metadata_fn(audio_path):
+                return _gen_meta(str(audio_path), server_url=flamingo_url,
+                                 hf_token=hf_token or None)
+        else:
+            print("[INFO] No Music Flamingo URL configured — metadata provider disabled.",
+                  file=sys.stderr)
+
+    # -- Lyrics provider -----------------------------------------------------
     lyrics_fn = None
-    if args.lyrics:
+    lyrics_provider = getattr(args, "lyrics_provider", None)
+    if lyrics_provider is None:
+        if not args.lyrics:
+            lyrics_provider = "none"
+        elif provider == "lyrics_only":
+            lyrics_provider = "genius"
+        else:
+            lyrics_provider = "genius"
+
+    if lyrics_provider == "genius":
         token = args.genius_token or get_genius_api_token()
         if token:
             from sidestep_engine.data.lyrics_provider_genius import fetch_lyrics as _genius
@@ -782,6 +815,30 @@ def _run_captions(args) -> int:
         else:
             print("[INFO] No Genius API token — lyrics fetching disabled. "
                   "Set GENIUS_API_TOKEN or use --genius-token.", file=sys.stderr)
+    elif lyrics_provider == "transcriber_server":
+        server_url = getattr(args, "transcriber_server_url", None) or get_transcriber_server_url() or ""
+        if server_url:
+            from sidestep_engine.data.lyrics_provider_server import fetch_lyrics_from_server as _srv_lyrics
+
+            def lyrics_fn(artist, title):
+                return _srv_lyrics("", server_url=server_url, artist=artist, title=title)
+        else:
+            print("[FAIL] --transcriber-server-url required for transcriber_server lyrics provider.",
+                  file=sys.stderr)
+            return 1
+    elif lyrics_provider == "music_flamingo":
+        flamingo_url = getattr(args, "music_flamingo_url", None) or get_music_flamingo_url() or ""
+        hf_token = getattr(args, "hf_token", None) or get_hf_token() or ""
+        if flamingo_url:
+            from sidestep_engine.data.lyrics_provider_music_flamingo import fetch_lyrics_from_music_flamingo as _flam_lyrics
+
+            def lyrics_fn(artist, title):
+                return _flam_lyrics("", server_url=flamingo_url, artist=artist,
+                                    title=title, hf_token=hf_token or None)
+        else:
+            print("[FAIL] --music-flamingo-url required for music_flamingo lyrics provider.",
+                  file=sys.stderr)
+            return 1
 
     print("\n" + "=" * 60)
     print("  AI Captions")
@@ -789,8 +846,10 @@ def _run_captions(args) -> int:
     print(f"  Input:          {input_dir}")
     print(f"  Audio files:    {len(audio_files)}")
     print(f"  Provider:       {provider}")
+    if metadata_fn:
+        print(f"  Metadata:       {meta_provider}")
+    print(f"  Lyrics:         {lyrics_provider}")
     print(f"  Policy:         {policy}")
-    print(f"  Lyrics:         {'on' if lyrics_fn else 'off'}")
     if default_artist:
         print(f"  Default artist: {default_artist}")
     print("=" * 60)
@@ -805,6 +864,7 @@ def _run_captions(args) -> int:
             default_artist=default_artist,
             caption_fn=caption_fn,
             lyrics_fn=lyrics_fn,
+            metadata_fn=metadata_fn,
             policy=policy,
         )
         status = result.get("status", "unknown")
