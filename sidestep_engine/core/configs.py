@@ -424,6 +424,14 @@ class TrainingConfigV2(TrainingConfig):
     Values below 60 (e.g. 30) may reduce training quality for full-length
     inference."""
 
+    max_latent_length: Optional[int] = None
+    """Random latent crop length measured directly in latent frames.
+    When set to a positive value, this takes precedence over ``chunk_duration``."""
+
+    crop_mode: Optional[str] = None
+    """Optional UI-facing crop mode hint (``full``, ``seconds``, ``latent``).
+    Training logic uses ``max_latent_length`` / ``chunk_duration`` directly."""
+
     chunk_decay_every: int = 10
     """Epoch interval for halving the chunk coverage histogram.
     Controls how quickly previously-trained regions become eligible again.
@@ -642,6 +650,8 @@ class TrainingConfigV2(TrainingConfig):
                 "max_duration": self.max_duration,
                 "normalize": self.normalize,
                 "chunk_duration": self.chunk_duration,
+                "max_latent_length": self.max_latent_length,
+                "crop_mode": self.crop_mode,
                 "chunk_decay_every": self.chunk_decay_every,
                 "dataset_repeats": self.dataset_repeats,
                 "max_steps": self.max_steps,

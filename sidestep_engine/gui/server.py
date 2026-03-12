@@ -118,6 +118,7 @@ class OpenFolderRequest(BaseModel):
 class VRAMEstimateRequest(BaseModel):
     batch_size: int = 1
     chunk_duration: Optional[int] = None
+    max_latent_length: Optional[int] = None
     rank: int = 64
     gradient_checkpointing_ratio: float = 1.0
     adapter_type: str = "lora"
@@ -623,6 +624,7 @@ def create_app(token: str | None = None, port: int = 8770) -> FastAPI:
             checkpointing_ratio=body.gradient_checkpointing_ratio,
             batch_size=body.batch_size,
             chunk_duration_s=chunk_s,
+            max_latent_length=body.max_latent_length,
             attn_backend="sdpa",
             offload_encoder=body.offload_encoder,
             adapter_type=body.adapter_type,

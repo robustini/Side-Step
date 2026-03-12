@@ -195,6 +195,7 @@ class FixedLoRATrainer:
                 pin_memory_device=cfg.pin_memory_device,
                 val_split=getattr(cfg, "val_split", 0.0),
                 chunk_duration=getattr(cfg, "chunk_duration", None),
+                max_latent_length=getattr(cfg, "max_latent_length", None),
                 chunk_decay_every=getattr(cfg, "chunk_decay_every", 10),
                 dataset_repeats=getattr(cfg, "dataset_repeats", 1),
             )

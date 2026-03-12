@@ -26,6 +26,9 @@ const VRAM = (() => {
     else if (adapter === 'loha') rank = parseInt($('full-loha-dim')?.value) || 64;
     else if (adapter === 'oft') rank = parseInt($('full-oft-block-size')?.value) || 64;
     const ratio = parseFloat($('full-grad-ckpt-ratio')?.value);
+    const cropMode = $('full-crop-mode')?.value || 'full';
+    const chunkDuration = parseInt($('full-chunk-duration')?.value) || 0;
+    const maxLatLen = parseInt($('full-max-latent-length')?.value) || 0;
     return {
       adapter_type: adapter,
       rank: rank,
@@ -34,7 +37,8 @@ const VRAM = (() => {
       gradient_checkpointing: !isNaN(ratio) && ratio > 0 ? 'on' : 'off',
       gradient_checkpointing_ratio: !isNaN(ratio) ? ratio : 1.0,
       optimizer_type: $('full-optimizer')?.value || 'adamw',
-      chunk_duration: parseInt($('full-chunk-duration')?.value) || 0,
+      chunk_duration: cropMode === 'seconds' ? chunkDuration : 0,
+      max_latent_length: cropMode === 'latent' ? maxLatLen : 0,
       target_mlp: $('full-target-mlp')?.checked ?? true,
     };
   }
