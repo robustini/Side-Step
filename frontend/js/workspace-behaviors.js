@@ -298,6 +298,28 @@ const WorkspaceBehaviors = (() => {
     });
   }
 
+
+  /* ---- Crop mode ---- */
+  function initCropModeReactivity() {
+    const modeSel = $("full-crop-mode");
+    const chunkInput = $("full-chunk-duration");
+    const maxLatInput = $("full-max-latent-length");
+    const chunkDecay = $("full-chunk-decay-every");
+    const chunkGroup = chunkInput?.closest(".form-group");
+    const maxLatGroup = maxLatInput?.closest(".form-group");
+    const update = () => {
+      const mode = modeSel?.value || "full";
+      if (chunkGroup) chunkGroup.style.display = mode === "seconds" ? "" : "none";
+      if (maxLatGroup) maxLatGroup.style.display = mode === "latent" ? "" : "none";
+      if (chunkDecay) {
+        const row = chunkDecay.closest('.form-group');
+        if (row) row.style.display = mode === "full" ? "none" : "";
+      }
+    };
+    modeSel?.addEventListener("change", update);
+    update();
+  }
+
   /* ---- Scheduler ---- */
   function initSchedulerReactivity() {
     const sel = $("full-scheduler");
@@ -456,6 +478,7 @@ const WorkspaceBehaviors = (() => {
     initModalUX();
     initModelDerivedDefaults();
     initLossWeightingReactivity();
+    initCropModeReactivity();
     initSchedulerReactivity();
     initOptimizerReactivity();
     initResumeReactivity();

@@ -176,7 +176,7 @@ PRESET_FIELDS = frozenset([
     "learning_rate", "batch_size", "gradient_accumulation", "epochs",
     "warmup_steps", "max_steps", "weight_decay", "max_grad_norm", "seed",
     "dataset_repeats", "shift", "num_inference_steps",
-    "chunk_duration", "chunk_decay_every",
+    "crop_mode", "chunk_duration", "max_latent_length", "chunk_decay_every",
     "optimizer_type", "scheduler_type", "scheduler_formula",
     "cfg_ratio", "loss_weighting", "snr_gamma",
     "save_every", "log_every", "log_heavy_every",

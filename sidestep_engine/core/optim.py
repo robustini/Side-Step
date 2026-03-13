@@ -20,7 +20,6 @@ Supported schedulers:
 
 from __future__ import annotations
 
-import inspect
 import logging
 import math
 from typing import Iterable
@@ -60,35 +59,6 @@ def _sanitize_scalar_hparams(lr: float, weight_decay: float) -> tuple[float, flo
         safe_wd = 0.01
 
     return safe_lr, safe_wd
-
-
-def _build_prodigy_kwargs(
-    prodigy_cls,
-    params: Iterable,
-    lr: float,
-    weight_decay: float,
-) -> dict:
-    """Build kwargs for prodigy with optional stability flags if supported."""
-    kwargs = {
-        "params": params,
-        "lr": lr,
-        "weight_decay": weight_decay,
-    }
-    try:
-        sig = inspect.signature(prodigy_cls.__init__)
-    except Exception:
-        return kwargs
-
-    optional_safe_args = {
-        "safeguard_warmup": True,
-        "use_bias_correction": True,
-        "betas": (0.9, 0.99),
-        "eps": 1e-8,
-    }
-    for key, value in optional_safe_args.items():
-        if key in sig.parameters:
-            kwargs[key] = value
-    return kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +112,7 @@ def build_optimizer(
         try:
             from prodigyopt import Prodigy
             requested_lr = lr
-            if abs(lr - 1e-4) < 1e-12:
+            if lr <= 1e-3:
                 lr = _PRODIGY_DEFAULT_LR
 
             logger.info(
@@ -151,7 +121,7 @@ def build_optimizer(
                 lr,
                 weight_decay,
             )
-            return Prodigy(**_build_prodigy_kwargs(Prodigy, params, lr, weight_decay))
+            return Prodigy(params, lr=lr, weight_decay=weight_decay)
         except ImportError:
             logger.warning(
                 "[Side-Step] prodigyopt not installed -- falling back to AdamW. "

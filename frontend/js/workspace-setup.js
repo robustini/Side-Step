@@ -193,7 +193,7 @@ const WorkspaceSetup = (() => {
       lr:"full-lr", batch_size:"full-batch", grad_accum:"full-grad-accum", epochs:"full-epochs", warmup_steps:"full-warmup",
       max_steps:"full-max-steps", dataset_repeats:"full-dataset-repeats", shift:"full-shift", num_inference_steps:"full-inference-steps",
       cfg_ratio:"full-cfg-dropout", loss_weighting:"full-loss-weighting", snr_gamma:"full-snr-gamma", gradient_checkpointing_ratio:"full-grad-ckpt-ratio",
-      chunk_duration:"full-chunk-duration", chunk_decay_every:"full-chunk-decay-every", optimizer_type:"full-optimizer", scheduler:"full-scheduler",
+      chunk_duration:"full-chunk-duration", max_latent_length:"full-max-latent-length", chunk_decay_every:"full-chunk-decay-every", optimizer_type:"full-optimizer", scheduler:"full-scheduler",
       scheduler_formula:"full-scheduler-formula", device:"full-device", precision:"full-precision", save_every:"full-save-every",
       log_every:"full-log-every", log_heavy_every:"full-log-heavy-every", save_best_after:"full-save-best-after", early_stop:"full-early-stop",
       weight_decay:"full-weight-decay", max_grad_norm:"full-max-grad-norm", seed:"full-seed", warmup_start_factor:"full-warmup-start-factor",
@@ -244,6 +244,14 @@ const WorkspaceSetup = (() => {
       const _touched = [];
       Object.entries(valMap).forEach(([k, id]) => { if (p[k] != null) { const el = $(id); if (el) { el.value = p[k]; _touched.push(el); } } });
       Object.entries(chkMap).forEach(([k, id]) => { if (p[k] != null) { const el = $(id); if (el) { el.checked = !!p[k]; _touched.push(el); } } });
+      const cropModeEl = $("full-crop-mode");
+      if (cropModeEl) {
+        if (p.crop_mode) cropModeEl.value = p.crop_mode;
+        else if (p.max_latent_length != null && Number(p.max_latent_length) > 0) cropModeEl.value = "latent";
+        else if (p.chunk_duration != null && Number(p.chunk_duration) > 0) cropModeEl.value = "seconds";
+        else cropModeEl.value = "full";
+        _touched.push(cropModeEl);
+      }
       _touched.forEach((el) => {
         el.dispatchEvent(new Event("change", { bubbles: true }));
         if (el.type !== "checkbox" && el.tagName !== "SELECT") el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -280,8 +288,8 @@ const WorkspaceSetup = (() => {
     };
 
     const _MASK_CHAR = "\u2022";
-    const _SENSITIVE_KEYS = new Set(["gemini_api_key", "openai_api_key", "genius_api_token", "hf_token"]);
-    function _isMasked(v) { return typeof v === "string" && v.length > 0 && /^[\u2022\s]+$/.test(v); }
+    const _SENSITIVE_KEYS = new Set(["gemini_api_key", "openai_api_key", "genius_api_token"]);
+    function _isMasked(v) { return typeof v === "string" && v.includes(_MASK_CHAR); }
     function _gatherSettings() {
       const raw = {
         checkpoint_dir: $("settings-checkpoint-dir")?.value,
@@ -294,13 +302,11 @@ const WorkspaceSetup = (() => {
         openai_api_key: $("settings-openai-key")?.value,
         openai_base_url: $("settings-openai-base")?.value,
         genius_api_token: $("settings-genius-token")?.value,
-        transcriber_server_url: $("settings-transcriber-server-url")?.value,
-        music_flamingo_url: $("settings-music-flamingo-url")?.value,
-        hf_token: $("settings-hf-token")?.value,
       };
       const out = {};
       Object.entries(raw).forEach(([k, v]) => {
         if (v == null || _isMasked(v)) return;
+        if (_SENSITIVE_KEYS.has(k) && v === "") return;
         out[k] = v;
       });
       return out;
@@ -448,8 +454,6 @@ const WorkspaceSetup = (() => {
     const gemKey = $("settings-gemini-key")?.value || "";
     const oaiKey = $("settings-openai-key")?.value || "";
     const genKey = $("settings-genius-token")?.value || "";
-    const transcriberUrl = $("settings-transcriber-server-url")?.value || "";
-    const musicFlamingoUrl = $("settings-music-flamingo-url")?.value || "";
     const _setBadgeState = (el, configured) => {
       if (!el) return;
       el.textContent = configured ? "configured [ok]" : "not set";
@@ -460,8 +464,6 @@ const WorkspaceSetup = (() => {
     _setBadgeState($("caption-gemini-badge"), gemKey && !gemKey.includes("Not set"));
     _setBadgeState($("caption-openai-badge"), !!oaiKey);
     _setBadgeState($("caption-genius-badge"), !!genKey);
-    _setBadgeState($("caption-transcriber-badge"), !!transcriberUrl);
-    _setBadgeState($("caption-music-flamingo-badge"), !!musicFlamingoUrl);
 
     if (typeof CustomSelect !== "undefined" && CustomSelect.refresh) CustomSelect.refresh();
   }

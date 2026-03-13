@@ -126,9 +126,10 @@ DEFAULT_LOSS_WEIGHTING: str = "none"
 DEFAULT_SNR_GAMMA: float = 5.0
 
 # ---------------------------------------------------------------------------
-# Chunking
+# Chunking / cropping
 # ---------------------------------------------------------------------------
 
+DEFAULT_MAX_LATENT_LENGTH: int = 0
 DEFAULT_CHUNK_DECAY_EVERY: int = 10
 
 # ---------------------------------------------------------------------------
@@ -234,6 +235,7 @@ TRAINING_DEFAULTS: dict = {
     "loss_weighting": DEFAULT_LOSS_WEIGHTING,
     "snr_gamma": DEFAULT_SNR_GAMMA,
     # Chunking
+    "max_latent_length": DEFAULT_MAX_LATENT_LENGTH,
     "chunk_decay_every": DEFAULT_CHUNK_DECAY_EVERY,
     # DataLoader
     "num_workers": DEFAULT_NUM_WORKERS,
@@ -310,6 +312,7 @@ GUI_FIELD_MAP: dict = {
     "optimizer_type": "full-optimizer",
     "scheduler_type": "full-scheduler",
     "scheduler_formula": "full-scheduler-formula",
+    "max_latent_length": "full-max-latent-length",
     "device": "full-device",
     "precision": "full-precision",
     "save_every": "full-save-every",
@@ -405,6 +408,8 @@ def get_gui_defaults() -> dict:
     out["full-self-projections"] = _projs
     out["full-cross-projections"] = _projs
     out["full-chunk-duration"] = "0"
+    out["full-max-latent-length"] = "0"
+    out["full-crop-mode"] = "full"
 
     # -- Timestep defaults (from model config, not training params) --------
     out["full-timestep-mu"] = "-0.4"

@@ -424,6 +424,14 @@ class TrainingConfigV2(TrainingConfig):
     Values below 60 (e.g. 30) may reduce training quality for full-length
     inference."""
 
+    max_latent_length: Optional[int] = None
+    """Random latent crop length measured directly in latent frames.
+    When set to a positive value, this takes precedence over ``chunk_duration``."""
+
+    crop_mode: Optional[str] = None
+    """Optional UI-facing crop mode hint (``full``, ``seconds``, ``latent``).
+    Training logic uses ``max_latent_length`` / ``chunk_duration`` directly."""
+
     chunk_decay_every: int = 10
     """Epoch interval for halving the chunk coverage histogram.
     Controls how quickly previously-trained regions become eligible again.
@@ -539,6 +547,14 @@ class TrainingConfigV2(TrainingConfig):
                 f"target_loss_smoothing must be > 0 and < 1 "
                 f"(got {self.target_loss_smoothing})"
             )
+        if self.chunk_duration is not None and self.chunk_duration < 0:
+            errors.append(f"chunk_duration must be >= 0 when set (got {self.chunk_duration})")
+        if self.max_latent_length is not None and self.max_latent_length < 0:
+            errors.append(f"max_latent_length must be >= 0 when set (got {self.max_latent_length})")
+        if self.crop_mode not in (None, "full", "seconds", "latent"):
+            errors.append(
+                f"crop_mode must be one of None, 'full', 'seconds', 'latent' (got {self.crop_mode!r})"
+            )
         if errors:
             raise ValueError(
                 "Invalid training configuration:\n  - " + "\n  - ".join(errors)
@@ -642,6 +658,8 @@ class TrainingConfigV2(TrainingConfig):
                 "max_duration": self.max_duration,
                 "normalize": self.normalize,
                 "chunk_duration": self.chunk_duration,
+                "max_latent_length": self.max_latent_length,
+                "crop_mode": self.crop_mode,
                 "chunk_decay_every": self.chunk_decay_every,
                 "dataset_repeats": self.dataset_repeats,
                 "max_steps": self.max_steps,

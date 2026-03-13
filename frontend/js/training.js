@@ -550,13 +550,25 @@ const Training = (() => {
     _stepsPerEpoch = parseInt(_config.steps_per_epoch) || 0;
     _startTime = Date.now(); _epochStartTime = Date.now(); _lastEpochDuration = 0;
 
-    // Strip frontend-only keys and zero-means-off fields before sending to backend
+    // Strip frontend-only keys before sending to backend
     delete _config.steps_per_epoch;
-    // Only strip chunk_duration when zero (disabled).  chunk_decay_every=0
-    // is a valid user choice ("no coverage decay") and must be preserved.
-    if (_config.chunk_duration !== undefined && (Number(_config.chunk_duration) === 0 || _config.chunk_duration === '0')) delete _config.chunk_duration;
-    // When chunking is disabled, chunk_decay_every is irrelevant — strip it too
-    if (!_config.chunk_duration && _config.chunk_decay_every !== undefined && (Number(_config.chunk_decay_every) === 0 || _config.chunk_decay_every === '0')) delete _config.chunk_decay_every;
+
+    // Keep crop fields mode-aware so the backend sees an unambiguous crop policy.
+    const cropMode = (_config.crop_mode || '').toString().trim();
+    if (cropMode === 'full') {
+      delete _config.chunk_duration;
+      delete _config.max_latent_length;
+      delete _config.chunk_decay_every;
+    } else if (cropMode === 'seconds') {
+      delete _config.max_latent_length;
+    } else if (cropMode === 'latent') {
+      delete _config.chunk_duration;
+    } else {
+      // Backward-compatible fallback when crop_mode is absent.
+      if (_config.chunk_duration !== undefined && (Number(_config.chunk_duration) === 0 || _config.chunk_duration === '0')) delete _config.chunk_duration;
+      if (_config.max_latent_length !== undefined && (Number(_config.max_latent_length) === 0 || _config.max_latent_length === '0')) delete _config.max_latent_length;
+      if (!_config.chunk_duration && !_config.max_latent_length) delete _config.chunk_decay_every;
+    }
 
     // Reset stop button state from previous run
     const stopBtn = $('btn-stop');
