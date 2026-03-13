@@ -401,7 +401,7 @@ const Dataset = (() => {
 
     if (!tbody) return;
     _renderHierarchy(tbody);
-    if (typeof initShiftClickTable === 'function') initShiftClickTable('dataset-tbody', { requireModifier: true });
+    if (typeof initShiftClickTable === 'function') initShiftClickTable('dataset-tbody');
     document.dispatchEvent(new CustomEvent('sidestep:dataset-scanned', { detail: { fileCount: _files.length } }));
   }
 
