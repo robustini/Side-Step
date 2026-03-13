@@ -430,6 +430,7 @@ const WorkspaceConfig = (() => {
       batch_size: _v("full-batch", "1"), grad_accum: _v("full-grad-accum", "4"),
       epochs: _v("full-epochs", "1000"), warmup_steps: _v("full-warmup", "100"), max_steps: _v("full-max-steps", "0"),
       shift: _v("full-shift", "3.0"), num_inference_steps: _v("full-inference-steps", "8"),
+      timestep_mode: _v("full-timestep-mode", "continuous"),
       cfg_ratio: _v("full-cfg-dropout", "0.15"), loss_weighting: _v("full-loss-weighting", "none"),
       snr_gamma: _v("full-snr-gamma", "5.0"), offload_encoder: _c("full-offload-encoder"),
       gradient_checkpointing: gradCkptEnabled,

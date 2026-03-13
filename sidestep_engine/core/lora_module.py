@@ -2,9 +2,9 @@
 FixedLoRAModule -- adapter training step for ACE-Step 1.5
 
 This module contains the ``FixedLoRAModule`` (nn.Module) responsible for
-the per-step training logic. Training uses continuous logit-normal
-sampling plus CFG dropout for all ACE-Step 1.5 variants, including turbo,
-to match the reference ACE trainer's training distribution.
+the per-step training logic. Timestep sampling is controlled by
+``timestep_mode``: continuous (logit-normal, default for all variants)
+or discrete (8-step turbo schedule). CFG dropout is applied for all modes.
 
 Also includes small device/dtype/precision helpers used by both the
 Fabric and basic training loops.
@@ -45,6 +45,7 @@ from sidestep_engine.core.configs import (
 )
 from sidestep_engine.core.timestep_sampling import (
     apply_cfg_dropout,
+    sample_discrete_timesteps,
     sample_timesteps,
 )
 from sidestep_engine.core.types import TrainingUpdate
@@ -186,6 +187,7 @@ class FixedLoRAModule(nn.Module):
 
         # -- Training strategy -------------------------------------------------
         self._is_turbo: bool = getattr(training_config, "is_turbo", False)
+        self._timestep_mode: str = getattr(training_config, "timestep_mode", "continuous")
 
         # Timestep sampling params (used for all variants)
         self._timestep_mu = training_config.timestep_mu
@@ -198,20 +200,17 @@ class FixedLoRAModule(nn.Module):
         # Adaptive timestep sampler (set by trainer when enabled, None = off)
         self._adaptive_sampler = None
 
-        if self._is_turbo:
-            logger.info(
-                "[OK] Turbo detected -- using continuous logit-normal "
-                "sampling + CFG dropout (ratio=%.2f), loss_weighting=%s",
-                self._cfg_ratio,
-                self._loss_weighting,
-            )
-        else:
-            logger.info(
-                "[OK] Base/SFT detected -- using continuous logit-normal "
-                "sampling + CFG dropout (ratio=%.2f), loss_weighting=%s",
-                self._cfg_ratio,
-                self._loss_weighting,
-            )
+        _variant_label = "Turbo" if self._is_turbo else "Base/SFT"
+        _mode_label = (
+            "continuous logit-normal" if self._timestep_mode == "continuous"
+            else "discrete 8-step"
+        )
+        logger.info(
+            "[OK] %s detected -- using %s sampling + CFG dropout "
+            "(ratio=%.2f), loss_weighting=%s",
+            _variant_label, _mode_label,
+            self._cfg_ratio, self._loss_weighting,
+        )
 
         # Rolling buffer of sampled timesteps (CPU tensors) for TensorBoard
         # histogram logging.  Capped so memory stays bounded even over
@@ -345,10 +344,11 @@ class FixedLoRAModule(nn.Module):
     # -----------------------------------------------------------------------
 
     def training_step(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        """Single training step using the reference continuous sampling path.
+        """Single training step.
 
-        All variants use continuous logit-normal timestep sampling. CFG
-        dropout is applied whenever the model provides a null-condition
+        Timestep sampling follows ``timestep_mode``: continuous uses
+        logit-normal sampling, discrete uses the 8-step turbo schedule.
+        CFG dropout is applied whenever the model provides a null-condition
         embedding and the configured ratio is greater than zero.
 
         Args:
@@ -383,7 +383,13 @@ class FixedLoRAModule(nn.Module):
                     self._null_cond_emb,
                     cfg_ratio=self._cfg_ratio,
                 )
-            if self._adaptive_sampler is not None:
+            if self._timestep_mode == "discrete":
+                t, _r = sample_discrete_timesteps(
+                    batch_size=bsz,
+                    device=self.device,
+                    dtype=self.dtype,
+                )
+            elif self._adaptive_sampler is not None:
                 t, _r = self._adaptive_sampler.sample(
                     batch_size=bsz,
                     base_sampler=sample_timesteps,

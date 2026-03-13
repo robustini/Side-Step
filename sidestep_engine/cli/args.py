@@ -60,6 +60,7 @@ from sidestep_engine.training_defaults import (
     DEFAULT_WARMUP_START_FACTOR,
     DEFAULT_WARMUP_STEPS,
     DEFAULT_WEIGHT_DECAY,
+    DEFAULT_TIMESTEP_MODE,
     DEFAULT_ADAPTIVE_TIMESTEP_RATIO,
     DEFAULT_VAL_SPLIT,
 )
@@ -548,6 +549,9 @@ def _add_common_training_args(parser: argparse.ArgumentParser) -> None:
 def _add_train_args(parser: argparse.ArgumentParser) -> None:
     """Add arguments specific to the train subcommand."""
     g = parser.add_argument_group("Training (advanced)")
+    g.add_argument("--timestep-mode", type=str, default=DEFAULT_TIMESTEP_MODE, choices=["continuous", "discrete"],
+                   dest="timestep_mode",
+                   help=f"Timestep sampling: 'continuous' (logit-normal, recommended) or 'discrete' (8-step turbo schedule). (default: {DEFAULT_TIMESTEP_MODE})")
     g.add_argument("--cfg-ratio", type=float, default=DEFAULT_CFG_RATIO, help=f"CFG dropout probability (default: {DEFAULT_CFG_RATIO})")
     g.add_argument("--loss-weighting", type=str, default=DEFAULT_LOSS_WEIGHTING, choices=["none", "min_snr"],
                    help=f"Loss weighting: 'none' (flat MSE) or 'min_snr' (can yield better results on SFT/base, default: {DEFAULT_LOSS_WEIGHTING})")

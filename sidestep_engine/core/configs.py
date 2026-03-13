@@ -303,12 +303,16 @@ class TrainingConfigV2(TrainingConfig):
     adapter_type: str = "lora"
     """Adapter type: 'lora', 'dora', 'lokr', 'loha', or 'oft'."""
 
+    timestep_mode: str = "continuous"
+    """Timestep sampling strategy: 'continuous' (logit-normal, recommended
+    for all variants) or 'discrete' (8-step turbo inference schedule).
+    Previously turbo always used discrete; as of v1.1.1 continuous is the
+    default for all variants."""
+
     # --- Model variant detection ---------------------------------------------
     is_turbo: bool = False
     """Auto-detected: ``True`` when the model is turbo or a turbo-based
-    fine-tune (``num_inference_steps == 8``).  Controls whether training
-    uses discrete 8-step sampling (turbo) or continuous logit-normal
-    sampling + CFG dropout (base/sft).  Not user-facing."""
+    fine-tune (``num_inference_steps == 8``)."""
 
     # --- Model / paths ------------------------------------------------------
     model_variant: str = "base"
@@ -466,7 +470,7 @@ class TrainingConfigV2(TrainingConfig):
     adaptive_timestep_ratio: float = 0.0
     """Fraction of timesteps from loss-weighted adaptive distribution.
     0.0 = pure logit-normal (default).  0.3 = 30% adaptive + 70% base.
-    Only applies to base/SFT continuous sampling; turbo is unaffected."""
+    Only applies when timestep_mode='continuous'; discrete mode bypasses this."""
 
     warmup_start_factor: float = 0.1
     """LR warmup ramps from ``base_lr * warmup_start_factor`` to ``base_lr``.

@@ -26,6 +26,18 @@ def _levers_flow_math(a: dict) -> None:
     _is_turbo = is_turbo(a)
 
     print_message(
+        "Timestep mode controls how training timesteps are sampled:\n"
+        "  continuous = logit-normal distribution (recommended for all variants)\n"
+        "  discrete  = 8-step turbo inference schedule (legacy turbo behavior)",
+        kind="dim",
+    )
+    a["timestep_mode"] = ask(
+        "Timestep sampling mode",
+        default=a.get("timestep_mode", "continuous"),
+        choices=["continuous", "discrete"],
+    )
+
+    print_message(
         "Timestep mu/sigma control the logit-normal sampling distribution.\n"
         "  These are read from the model config — change only if you know\n"
         "  what you're doing.",

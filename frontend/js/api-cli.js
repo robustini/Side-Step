@@ -73,6 +73,7 @@ const APICli = (() => {
 
     addNonDefault('--shift', config.shift, '3.0');
     addNonDefault('--num-inference-steps', config.num_inference_steps, '8');
+    addNonDefault('--timestep-mode', config.timestep_mode, 'continuous');
     addNonDefault('--cfg-ratio', config.cfg_ratio, '0.15');
     addNonDefault('--loss-weighting', config.loss_weighting, 'none');
     if (config.loss_weighting === 'min_snr') addNonDefault('--snr-gamma', config.snr_gamma, '5.0');

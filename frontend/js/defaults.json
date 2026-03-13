@@ -38,6 +38,7 @@
   "full-cfg-dropout":         "0.15",
   "full-loss-weighting":      "none",
   "full-snr-gamma":           "5.0",
+  "full-timestep-mode":       "continuous",
 
   "full-offload-encoder":     true,
   "full-grad-ckpt-ratio":     "1.0",

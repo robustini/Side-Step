@@ -6,7 +6,7 @@ range.  A configurable fraction of each batch's timesteps are sampled
 from the loss-weighted distribution (higher loss → more samples),
 while the remainder uses the standard logit-normal base sampler.
 
-Only applies to base/SFT continuous sampling; turbo uses fixed 8 steps.
+Only applies when timestep_mode='continuous'; discrete mode bypasses this.
 """
 
 from __future__ import annotations

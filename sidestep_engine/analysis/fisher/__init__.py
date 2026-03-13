@@ -1,7 +1,7 @@
 """Fisher Information + Spectral Analysis for adaptive LoRA rank assignment.
 
 Public API:
-    run_fisher_analysis  -- full pipeline (Fisher + spectral + rank + preview)
+    run_fisher_analysis  -- run the full analysis pipeline
     load_fisher_map      -- load a saved fisher_map.json
     save_fisher_map      -- persist analysis results to JSON
 """

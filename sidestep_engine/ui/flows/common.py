@@ -70,6 +70,7 @@ from sidestep_engine.training_defaults import (
     DEFAULT_SNR_GAMMA,
     DEFAULT_STRICT_RESUME,
     DEFAULT_TARGET_MLP,
+    DEFAULT_TIMESTEP_MODE,
     DEFAULT_ADAPTIVE_TIMESTEP_RATIO,
     DEFAULT_VAL_SPLIT,
     DEFAULT_WARMUP_START_FACTOR,
@@ -331,6 +332,7 @@ def build_train_namespace(a: dict, mode: str = "train") -> argparse.Namespace:
         cfg_ratio=a.get("cfg_ratio", DEFAULT_CFG_RATIO),
         loss_weighting=loss_weighting,
         snr_gamma=a.get("snr_gamma", DEFAULT_SNR_GAMMA),
+        timestep_mode=a.get("timestep_mode", DEFAULT_TIMESTEP_MODE),
         # "All the Levers" enhancements
         ema_decay=a.get("ema_decay", DEFAULT_EMA_DECAY),
         val_split=a.get("val_split", DEFAULT_VAL_SPLIT),

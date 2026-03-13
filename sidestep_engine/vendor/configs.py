@@ -154,9 +154,8 @@ class TrainingConfig:
 
     Training uses:
     - Device-aware mixed precision (bf16 on CUDA/XPU, fp16 on MPS, fp32 on CPU)
-    - Discrete timesteps from turbo shift=3.0 schedule (8 steps)
-    - Randomly samples one of 8 timesteps per training step:
-      [1.0, 0.9545, 0.9, 0.8333, 0.75, 0.6429, 0.5, 0.3]
+    - Timestep sampling controlled by ``timestep_mode``: continuous
+      (logit-normal, default) or discrete (8-step turbo schedule)
     """
     # Fixed for turbo model
     shift: float = 3.0

@@ -124,6 +124,7 @@ DEFAULT_LOG_HEAVY_EVERY: int = 50
 DEFAULT_CFG_RATIO: float = 0.15
 DEFAULT_LOSS_WEIGHTING: str = "none"
 DEFAULT_SNR_GAMMA: float = 5.0
+DEFAULT_TIMESTEP_MODE: str = "continuous"
 
 # ---------------------------------------------------------------------------
 # Chunking / cropping
@@ -234,6 +235,7 @@ TRAINING_DEFAULTS: dict = {
     "cfg_ratio": DEFAULT_CFG_RATIO,
     "loss_weighting": DEFAULT_LOSS_WEIGHTING,
     "snr_gamma": DEFAULT_SNR_GAMMA,
+    "timestep_mode": DEFAULT_TIMESTEP_MODE,
     # Chunking
     "max_latent_length": DEFAULT_MAX_LATENT_LENGTH,
     "chunk_decay_every": DEFAULT_CHUNK_DECAY_EVERY,
@@ -335,6 +337,7 @@ GUI_FIELD_MAP: dict = {
     "cosine_restarts_count": "full-cosine-restarts",
     "ema_decay": "full-ema-decay",
     "val_split": "full-val-split",
+    "timestep_mode": "full-timestep-mode",
     "adaptive_timestep_ratio": "full-adaptive-timestep",
     "save_best_every_n_steps": "full-save-best-every-n-steps",
     "num_workers": "full-num-workers",
@@ -414,6 +417,7 @@ def get_gui_defaults() -> dict:
     # -- Timestep defaults (from model config, not training params) --------
     out["full-timestep-mu"] = "-0.4"
     out["full-timestep-sigma"] = "1.0"
+    out["full-timestep-mode"] = DEFAULT_TIMESTEP_MODE
 
     # -- Empty-string defaults ---------------------------------------------
     out["full-resume-from"] = ""
