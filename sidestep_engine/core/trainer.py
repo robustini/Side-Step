@@ -850,13 +850,20 @@ class FixedLoRATrainer:
                     self.module.model.decoder, optimizer, max_norm=cfg.max_grad_norm,
                 )
                 optimizer.step()
+                # Restore un-damped LR so scheduler.step() sees the pure value
+                # (same guard as the main accumulation path).
+                if _scheduler_lr is not None:
+                    for pg in optimizer.param_groups:
+                        pg["lr"] = _scheduler_lr
                 scheduler.step()
                 if _ema is not None:
                     _ema.update()
                 global_step += 1
 
                 avg_loss = accumulated_loss * cfg.gradient_accumulation_steps / accumulation_step
-                _lr = scheduler.get_last_lr()[0]
+                # Keep _scheduler_lr in sync so the next epoch's restore is correct.
+                _scheduler_lr = scheduler.get_last_lr()[0]
+                _lr = _scheduler_lr
                 if global_step % cfg.log_every == 0:
                     tb.log_loss(avg_loss, global_step)
                     tb.log_lr(_lr, global_step)

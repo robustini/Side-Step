@@ -221,7 +221,7 @@ def load_decoder_for_training(
                 str(model_dir),
                 trust_remote_code=True,
                 attn_implementation=attn_impl,
-                dtype=dtype,
+                torch_dtype=dtype,
             )
             setattr(model, "_side_step_attn_backend", attn_impl)
             logger.info("[OK] Model loaded with attn_implementation=%s", attn_impl)
@@ -301,8 +301,8 @@ def load_preprocessing_models(
     # 2. VAE
     vae_path = ckpt / "vae"
     if vae_path.is_dir():
-        vae = AutoencoderOobleck.from_pretrained(str(vae_path))
-        vae = vae.to(device=device, dtype=dtype)
+        vae = AutoencoderOobleck.from_pretrained(str(vae_path), torch_dtype=dtype)
+        vae = vae.to(device=device)
         vae.eval()
         result["vae"] = vae
         logger.info("[OK] VAE loaded from %s", vae_path)
@@ -314,8 +314,8 @@ def load_preprocessing_models(
     text_path = ckpt / "Qwen3-Embedding-0.6B"
     if text_path.is_dir():
         result["text_tokenizer"] = AutoTokenizer.from_pretrained(str(text_path))
-        text_enc = AutoModel.from_pretrained(str(text_path))
-        text_enc = text_enc.to(device=device, dtype=dtype)
+        text_enc = AutoModel.from_pretrained(str(text_path), torch_dtype=dtype)
+        text_enc = text_enc.to(device=device)
         text_enc.eval()
         result["text_encoder"] = text_enc
         logger.info("[OK] Text encoder loaded from %s", text_path)
@@ -368,8 +368,8 @@ def load_vae(
         raise FileNotFoundError(f"VAE directory not found: {vae_path}")
 
     dtype = _resolve_dtype(precision)
-    vae = AutoencoderOobleck.from_pretrained(str(vae_path))
-    vae = vae.to(device=device, dtype=dtype)
+    vae = AutoencoderOobleck.from_pretrained(str(vae_path), torch_dtype=dtype)
+    vae = vae.to(device=device)
     vae.eval()
     logger.info("[OK] VAE loaded from %s (%s)", vae_path, dtype)
     return vae
@@ -395,8 +395,8 @@ def load_text_encoder(
 
     dtype = _resolve_dtype(precision)
     tokenizer = AutoTokenizer.from_pretrained(str(text_path))
-    encoder = AutoModel.from_pretrained(str(text_path))
-    encoder = encoder.to(device=device, dtype=dtype)
+    encoder = AutoModel.from_pretrained(str(text_path), torch_dtype=dtype)
+    encoder = encoder.to(device=device)
     encoder.eval()
     logger.info("[OK] Text encoder loaded from %s (%s)", text_path, dtype)
     return tokenizer, encoder

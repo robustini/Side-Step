@@ -336,7 +336,7 @@ def _load_model(tier: str, *, allow_cpu_offload: bool = False) -> None:
         )
         load_kwargs["quantization_config"] = bnb_config
     else:
-        load_kwargs["dtype"] = compute_dtype
+        load_kwargs["torch_dtype"] = compute_dtype
 
     try:
         _model = Qwen2_5OmniForConditionalGeneration.from_pretrained(
