@@ -291,6 +291,11 @@ def ask(
                 if _is_back(raw):
                     raise GoBack()
                 if not raw and default is not None:
+                    if not isinstance(default, type_fn):
+                        try:
+                            return type_fn(default)
+                        except (ValueError, TypeError):
+                            pass
                     return default
                 if not raw and required:
                     console.print("  [red]This field is required[/]")
@@ -340,6 +345,11 @@ def ask(
             if allow_back and _is_back(raw):
                 raise GoBack()
             if not raw and default is not None:
+                if not isinstance(default, type_fn):
+                    try:
+                        return type_fn(default)
+                    except (ValueError, TypeError):
+                        pass
                 return default
             if not raw and required:
                 print("  This field is required")

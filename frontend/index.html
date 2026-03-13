@@ -110,7 +110,7 @@
        Top Bar
        ============================================================ -->
   <header class="topbar">
-    <span class="topbar__logo">░▒▓ SIDE-STEP <span class="topbar__version">v1.0-beta</span></span>
+    <span class="topbar__logo">░▒▓ SIDE-STEP <span class="topbar__version">v1.1-beta</span></span>
     <span class="topbar__divider"></span>
     <nav class="topbar__modes">
       <button class="topbar__mode active" data-mode="ez">Ez Mode <span class="kbd">⌥1</span></button>
@@ -171,9 +171,9 @@
           </label>
           <div class="input-with-browse">
             <select class="select model-picker" id="ez-model-variant">
-              <option value="turbo" selected>turbo (fast, 8 steps)</option>
-              <option value="base">base (quality, 50 steps)</option>
+              <option value="base" selected>base (recommended, 50 steps)</option>
               <option value="sft">sft (prompted, 50 steps)</option>
+              <option value="turbo">turbo (fast inference, 8 steps)</option>
             </select>
             <button class="btn btn--sm btn--refresh" title="Refresh model list">R</button>
           </div>
@@ -185,13 +185,13 @@
             <h4>What is this?</h4>
             <p>Which base model to fine-tune. Available variants are auto-detected from your checkpoint directory.</p>
             <ul>
-              <li><code>turbo</code> — Fast inference (8 steps). Best for most use cases.</li>
-              <li><code>base</code> — Higher quality, slower (50 steps). Better for complex music.</li>
+              <li><code>base</code> — Recommended for training. LoRAs trained on base transfer to turbo/sft at inference.</li>
               <li><code>sft</code> — Supervised fine-tune, follows text prompts more closely.</li>
+              <li><code>turbo</code> — Fast inference (8 steps). Not recommended for training.</li>
             </ul>
             <p><em>Can't find your model? Check your checkpoint directory in Settings.</em></p>
-            <span class="badge badge--speed">Speed: turbo=fast, base/sft=slower inference</span>
-            <span class="badge badge--quality">Quality: base slightly higher ceiling</span>
+            <span class="badge badge--quality">Quality: base produces the best LoRAs</span>
+            <span class="badge badge--speed">Inference: turbo=fast, base/sft=slower</span>
           </div>
         </div>
 
@@ -334,9 +334,9 @@
               </label>
               <div class="input-with-browse">
                 <select class="select model-picker" id="full-model-variant">
-                  <option value="turbo" selected>turbo</option>
-                  <option value="base">base</option>
+                  <option value="base" selected>base</option>
                   <option value="sft">sft</option>
+                  <option value="turbo">turbo</option>
                 </select>
                 <button class="btn btn--sm btn--refresh" title="Refresh model list">R</button>
               </div>
@@ -347,7 +347,7 @@
               <div class="field-warning" id="warn-non-base-full" style="display:none;">
                 <strong>Not recommended.</strong> Training on the <strong>base</strong> variant produces the best LoRAs. LoRAs trained on base transfer to turbo/sft at inference time.
               </div>
-              <div id="full-strategy-banner" style="font-size: var(--font-size-sm); color: var(--muted); margin-top: var(--space-xs);">Turbo — discrete 8-step sampling, no CFG</div>
+              <div id="full-strategy-banner" style="font-size: var(--font-size-sm); color: var(--muted); margin-top: var(--space-xs);">Base/SFT — continuous sampling + CFG dropout</div>
             </div>
             <div class="form-group">
               <label class="form-group__label">Adapter type <span class="help-icon" data-help="help-full-adapter">?</span></label>
@@ -819,6 +819,18 @@
               </div>
               <div id="cfg-settings-group">
                 <div class="form-row">
+                  <div class="form-group" id="timestep-mode-group">
+                    <label class="form-group__label" for="full-timestep-mode">Timestep sampling <span class="help-icon" data-help="help-full-ts-mode">?</span></label>
+                    <div id="help-full-ts-mode" class="help-panel">
+                      <p><strong>continuous:</strong> Logit-normal distribution. Recommended for all model variants. Samples timesteps from a smooth distribution centered around the model's training regime.</p>
+                      <p><strong>discrete:</strong> Samples uniformly from the 8-step turbo inference schedule (shift=3.0). Legacy behavior for turbo models — trains at exactly the timestep values used during 8-step inference.</p>
+                    </div>
+                    <select class="select" id="full-timestep-mode">
+                      <option value="continuous" selected>continuous</option>
+                      <option value="discrete">discrete</option>
+                    </select>
+                    <div class="hint">continuous recommended for all variants</div>
+                  </div>
                   <div class="form-group" id="cfg-dropout-group">
                     <label class="form-group__label">CFG dropout <span class="help-icon" data-help="help-full-cfg">?</span> <span style="color: var(--muted); font-size: var(--font-size-sm);">(base/sft only)</span></label>
                     <input class="input has-default" type="number" id="full-cfg-dropout" value="0.15" step="0.01" data-default="0.15" data-validate="range:0:1">
@@ -892,27 +904,19 @@
               </div>
               <div class="form-row">
                 <div class="form-group">
-                  <label class="form-group__label">Chunk duration (0=off) <span class="help-icon" data-help="help-full-chunk">?</span></label>
-                  <input class="input has-default vram-input" type="number" id="full-chunk-duration" value="0" data-default="0" data-validate="gte:0 int">
-                  <div class="field-error"></div>
-                  <div class="field-warning" id="warn-chunk-short"></div>
-                  <div id="help-full-chunk" class="help-panel">
-                    <p><strong>Simple:</strong> Instead of training on the full-length audio, crops a random segment of this many seconds each step. Saves VRAM because the model processes shorter sequences.</p>
-                    <p>Set to 0 to use full-length audio (uses more VRAM). 60s is a good starting point if you need savings.</p>
-                    <span class="badge badge--vram">VRAM: 60s saves ~2-4 GB vs full-length</span>
-                    <span class="badge badge--quality">Quality: Short chunks may miss long-range structure</span>
-                  </div>
-                  <div class="hint">60s recommended if you need VRAM savings.</div>
-                </div>
-                <div class="form-group">
-                  <label class="form-group__label">Chunk decay interval <span class="help-icon" data-help="help-full-chunk-decay">?</span></label>
+                  <label class="form-group__label">Crop decay interval <span class="help-icon" data-help="help-full-chunk-decay">?</span></label>
                   <div id="help-full-chunk-decay" class="help-panel">
-                    <p><strong>Simple:</strong> Every N epochs, the chunk sampler gradually shifts which sections of each song it covers, ensuring the model eventually sees all parts of every track.</p>
-                    <p>0 = off (random chunks every step). 10 = decay coverage every 10 epochs.</p>
+                    <p><strong>Simple:</strong> Every N epochs, the crop sampler gradually shifts which sections of each song it covers, ensuring the model eventually sees all parts of every track.</p>
+                    <p>0 = off (random crop every step). 10 = decay coverage every 10 epochs.</p>
                   </div>
                   <input class="input has-default" type="number" id="full-chunk-decay-every" value="10" data-default="10" data-validate="gte:0 int">
                   <div class="field-error"></div>
-                  <div class="hint">Coverage decay epochs (0=off)</div>
+                  <div class="hint">Applies to chunk-seconds and max-latent crop modes.</div>
+                </div>
+                <div class="form-group" style="display:none;">
+                  <label class="form-group__label">Crop controls moved</label>
+                  <input class="input" type="text" value="Use Optimizer & Scheduler section" disabled>
+                  <div class="hint">Full / chunk-seconds / max-latent-length live there now.</div>
                 </div>
               </div>
             </div>
@@ -955,6 +959,42 @@
                     <option value="cosine_restarts">Cosine with restarts</option>
                     <option value="custom">Custom formula</option>
                   </select>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-group__label" for="full-crop-mode">Sequence crop mode <span class="help-icon" data-help="help-full-crop-mode">?</span></label>
+                  <div id="help-full-crop-mode" class="help-panel">
+                    <p><strong>Full sample:</strong> no crop. Highest context, highest VRAM.</p>
+                    <p><strong>Chunk by seconds:</strong> random moving crop based on audio seconds.</p>
+                    <p><strong>Max latent length:</strong> random moving crop based on latent frames.</p>
+                  </div>
+                  <select class="select vram-input" id="full-crop-mode">
+                    <option value="full" selected>Full sample (no crop)</option>
+                    <option value="seconds">Chunk by seconds</option>
+                    <option value="latent">Max latent length</option>
+                  </select>
+                </div>
+                <div class="form-group" id="crop-seconds-group" style="display:none;">
+                  <label class="form-group__label" for="full-chunk-duration">Chunk duration (seconds) <span class="help-icon" data-help="help-full-chunk">?</span></label>
+                  <input class="input has-default vram-input" type="number" id="full-chunk-duration" value="0" data-default="0" data-validate="gte:0 int">
+                  <div class="field-error"></div>
+                  <div class="field-warning" id="warn-chunk-short"></div>
+                  <div id="help-full-chunk" class="help-panel">
+                    <p><strong>Simple:</strong> Crop a random moving segment of this many seconds each step.</p>
+                    <p>Set to 0 to disable. 60s is a common compromise when VRAM is tight.</p>
+                  </div>
+                  <div class="hint">Used only in <em>Chunk by seconds</em> mode.</div>
+                </div>
+                <div class="form-group" id="crop-latent-group" style="display:none;">
+                  <label class="form-group__label" for="full-max-latent-length">Max latent length <span class="help-icon" data-help="help-full-max-latent">?</span></label>
+                  <input class="input has-default vram-input" type="number" id="full-max-latent-length" value="0" data-default="0" data-validate="gte:0 int">
+                  <div class="field-error"></div>
+                  <div id="help-full-max-latent" class="help-panel">
+                    <p><strong>Simple:</strong> Random moving crop measured directly in latent frames.</p>
+                    <p>Set 1500 for a common latent-crop setup.</p>
+                  </div>
+                  <div class="hint">Used only in <em>Max latent length</em> mode.</div>
                 </div>
               </div>
               <div class="form-group" id="scheduler-formula-group" style="display: none;">
@@ -1151,6 +1191,53 @@
                   </div>
                   <input class="input has-default" type="number" id="full-seed" value="42" data-default="42" data-validate="int">
                   <div class="field-error"></div>
+                </div>
+              </div>
+              <!-- Cruise Control -->
+              <div style="color: var(--primary); font-size: var(--font-size-sm); font-weight: bold; margin: var(--space-md) 0 var(--space-xs);">Cruise Control</div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-group__label">Target loss (0=off) <span class="help-icon" data-help="help-full-target-loss">?</span></label>
+                  <div id="help-full-target-loss" class="help-panel">
+                    <h4>Loss Cruise Control</h4>
+                    <p><strong>Simple:</strong> Set a target loss value (e.g. 0.5) and training will automatically slow down as it approaches that level, holding steady without overshooting. Training keeps running — you decide when to stop.</p>
+                    <p>0 = disabled. Typical values: 0.3–0.8 depending on dataset size and quality.</p>
+                  </div>
+                  <input class="input has-default" type="text" id="full-target-loss" value="0" data-default="0" data-validate="gte:0">
+                  <div class="field-error"></div>
+                  <div class="hint">Damp LR as loss approaches this value. 0=disabled.</div>
+                </div>
+                <div class="form-group">
+                  <label class="form-group__label">LR floor <span class="help-icon" data-help="help-full-target-loss-floor">?</span></label>
+                  <div id="help-full-target-loss-floor" class="help-panel">
+                    <p><strong>Simple:</strong> When cruise control is active, this is the minimum fraction of the scheduled LR. 0.01 = LR can drop to 1% of its normal value at the target loss. Lower = harder brake.</p>
+                  </div>
+                  <input class="input has-default" type="number" id="full-target-loss-floor" value="0.01" step="0.01" data-default="0.01" data-validate="gt:0 lte:1">
+                  <div class="field-error"></div>
+                  <div class="hint">Min LR multiplier at target (0.01 = 1%)</div>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-group__label">Warmup steps <span class="help-icon" data-help="help-full-target-loss-warmup">?</span></label>
+                  <div id="help-full-target-loss-warmup" class="help-panel">
+                    <p><strong>Simple:</strong> How many optimizer steps to wait before cruise control can engage. Early loss values are noisy — this prevents premature activation.</p>
+                    <p>Lower for small datasets, higher for large noisy datasets.</p>
+                  </div>
+                  <input class="input has-default" type="number" id="full-target-loss-warmup" value="50" data-default="50" data-validate="gte:0 int">
+                  <div class="field-error"></div>
+                  <div class="hint">Min steps before cruise engages</div>
+                  <div id="warn-cruise-warmup" class="field-warning" style="display:none;"></div>
+                </div>
+                <div class="form-group">
+                  <label class="form-group__label">Smoothing (EMA β) <span class="help-icon" data-help="help-full-target-loss-smoothing">?</span></label>
+                  <div id="help-full-target-loss-smoothing" class="help-panel">
+                    <p><strong>Simple:</strong> Controls how smoothly the loss signal is averaged. Higher values = smoother (less reactive to individual steps). Lower = more reactive.</p>
+                    <p>0.98 ≈ 50-step half-life. Try 0.95 for faster response or 0.99 for very smooth.</p>
+                  </div>
+                  <input class="input has-default" type="number" id="full-target-loss-smoothing" value="0.98" step="0.01" data-default="0.98" data-validate="gt:0 lt:1">
+                  <div class="field-error"></div>
+                  <div class="hint">Higher = smoother (0.95–0.99)</div>
                 </div>
               </div>
               <!-- Optimizer internals -->
@@ -1354,7 +1441,7 @@
             <div class="panel__title">Review</div>
             <div id="full-review-content">
               <div class="review-table__group" data-jump="full-model-variant" style="cursor:pointer;">Model</div>
-              <div class="review-table__row"><span class="review-table__key">Variant</span><span class="review-table__val" id="rev-variant">turbo</span></div>
+              <div class="review-table__row"><span class="review-table__key">Variant</span><span class="review-table__val" id="rev-variant">base</span></div>
               <div class="review-table__row"><span class="review-table__key">Checkpoint</span><span class="review-table__val" id="rev-ckpt">checkpoints</span></div>
               <div class="review-table__group" data-jump="full-adapter-type" style="cursor:pointer;">Adapter</div>
               <div class="review-table__row"><span class="review-table__key">Type</span><span class="review-table__val" id="rev-adapter">LoRA</span></div>
@@ -1366,6 +1453,7 @@
               <div class="review-table__row"><span class="review-table__key">LR</span><span class="review-table__val" id="rev-lr">1e-4</span></div>
               <div class="review-table__row"><span class="review-table__key">Batch</span><span class="review-table__val" id="rev-batch">1 × 4 = 4</span></div>
               <div class="review-table__row"><span class="review-table__key">Epochs</span><span class="review-table__val" id="rev-epochs">100</span></div>
+              <div class="review-table__row"><span class="review-table__key">Target loss</span><span class="review-table__val" id="rev-target-loss">off</span></div>
               <div class="review-table__row"><span class="review-table__key">Warmup</span><span class="review-table__val" id="rev-warmup">100 steps</span></div>
               <div class="review-table__row"><span class="review-table__key">Max steps</span><span class="review-table__val" id="rev-max-steps">off</span></div>
               <div class="review-table__row"><span class="review-table__key">Dataset repeats</span><span class="review-table__val" id="rev-repeats">1×</span></div>
@@ -1495,72 +1583,121 @@
           </div>
         </div>
 
-        <!-- Main two-panel: Loss chart + GPU -->
+        <!-- Full-width: Main chart panel -->
+        <div class="panel" style="margin-bottom: var(--space-md);">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-sm); flex-wrap: wrap; gap: 4px;">
+            <div class="panel__title" style="margin-bottom: 0;">Loss</div>
+            <div class="chart-toolbar">
+              <div class="chart-toolbar__group">
+                <button class="btn btn--sm chart-toggle active" data-series="loss" aria-pressed="true">Loss</button>
+                <button class="btn btn--sm chart-toggle active" data-series="ma5" aria-pressed="true">MA5</button>
+                <button class="btn btn--sm chart-toggle active" data-series="lr" aria-pressed="true">LR</button>
+              </div>
+              <div class="chart-toolbar__group">
+                <button class="btn btn--sm chart-axis" data-axis="step" aria-pressed="false">per Step</button>
+                <button class="btn btn--sm chart-axis active" data-axis="epoch" aria-pressed="true">per Epoch</button>
+              </div>
+              <div class="chart-toolbar__group" style="display: flex; align-items: center; gap: 4px;">
+                <span style="font-size: 10px; color: var(--muted);">Smooth</span>
+                <input type="range" id="chart-smoothing" min="0" max="999" value="600" style="width: 60px; height: 14px; accent-color: var(--primary);">
+                <span id="chart-smoothing-val" style="font-size: 10px; color: var(--muted); min-width: 28px;">0.60</span>
+              </div>
+              <div class="chart-toolbar__group">
+                <button class="btn btn--sm chart-snap" id="btn-snap-grid" title="Snap cursor to data points (S)" aria-pressed="true">S</button>
+                <button class="btn btn--sm chart-zoom" data-zoom="reset" title="Fit to data (reset zoom)">&#x22A1;</button>
+              </div>
+            </div>
+          </div>
+          <div class="monitor-chart-grid" id="monitor-chart-area">
+            <!-- Y-axis labels LEFT (loss scale) -->
+            <div class="monitor-chart-grid__yaxis" id="monitor-y-labels"></div>
+            <!-- Series area: SVG + overlays -->
+            <div class="monitor-chart-grid__series" id="monitor-series-area">
+              <!-- Legend -->
+              <div class="monitor-chart-grid__legend" id="monitor-legend">
+                <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 16px; height: 2px; background: var(--primary);"></span><span style="color: var(--primary);">Loss</span></span>
+                <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 16px; height: 0; border-top: 2px dashed var(--changed);"></span><span style="color: var(--changed);">MA5</span></span>
+                <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 16px; height: 0; border-top: 2px dotted var(--secondary);"></span><span style="color: var(--secondary);">LR</span></span>
+              </div>
+              <!-- SVG: gridlines + data polylines -->
+              <svg preserveAspectRatio="none" id="monitor-loss-svg">
+                <g id="monitor-grid-lines"></g>
+                <polyline id="monitor-loss-raw" fill="none" stroke="var(--primary)" stroke-width="2" vector-effect="non-scaling-stroke" opacity="0.3" points="" />
+                <polyline id="monitor-loss-line" fill="none" stroke="var(--primary)" stroke-width="2" vector-effect="non-scaling-stroke" points="" />
+                <polyline id="monitor-ma-line" fill="none" stroke="var(--changed)" stroke-width="2" stroke-dasharray="4,4" vector-effect="non-scaling-stroke" opacity="0.7" points="" />
+                <polyline id="monitor-lr-line" fill="none" stroke="var(--secondary)" stroke-width="2" stroke-dasharray="2,3" vector-effect="non-scaling-stroke" opacity="0.85" points="" />
+              </svg>
+              <!-- Hover dot markers (HTML overlay — avoids SVG preserveAspectRatio distortion) -->
+              <div id="monitor-hover-dots" style="display:none; position:absolute; inset:0; pointer-events:none; z-index:5;">
+                <div id="dot-smooth" class="chart-hover-dot chart-hover-dot--smooth"></div>
+                <div id="dot-raw"    class="chart-hover-dot chart-hover-dot--raw"></div>
+                <div id="dot-ma5"    class="chart-hover-dot chart-hover-dot--ma5"></div>
+                <div id="dot-lr"     class="chart-hover-dot chart-hover-dot--lr"></div>
+              </div>
+              <!-- Drag-zoom overlay -->
+              <div id="chart-drag-overlay" class="chart-zoom-box" style="display:none; position:absolute; pointer-events:none; z-index:4;"></div>
+              <!-- Crosshair -->
+              <div id="chart-crosshair" style="display:none; position:absolute; top:0; bottom:0; width:1px; background:var(--muted); opacity:0.5; pointer-events:none; z-index:3;"></div>
+              <!-- Tooltip (dark TB style) -->
+              <div id="chart-tooltip" class="chart-tooltip--tb" style="display:none;"></div>
+              <!-- Zoom hint -->
+              <div class="chart-zoom-hint" id="chart-zoom-hint" data-hint="Alt + Scroll to Zoom"></div>
+            </div>
+            <!-- Corner dot -->
+            <div class="monitor-chart-grid__dot"></div>
+            <!-- X-axis labels -->
+            <div class="monitor-chart-grid__xaxis" id="monitor-x-labels"></div>
+            <!-- Y-axis labels RIGHT (LR scale) -->
+            <div class="monitor-chart-grid__yaxis-r" id="monitor-y-labels-right"></div>
+          </div>
+        </div>
+
+        <!-- Expanded mini-chart (one at a time, same design as main chart) -->
+        <div id="monitor-expanded-chart" class="monitor-expanded-chart" style="display:none;">
+          <div class="monitor-expanded-chart__header">
+            <span class="monitor-expanded-chart__title" id="expanded-chart-title">--</span>
+            <span class="monitor-expanded-chart__value" id="expanded-chart-value">--</span>
+            <button class="btn btn--sm monitor-expanded-chart__close" id="btn-close-expanded" title="Collapse">&times;</button>
+          </div>
+          <div class="monitor-chart-grid monitor-chart-grid--expanded" id="expanded-chart-area">
+            <div class="monitor-chart-grid__yaxis" id="expanded-y-labels"></div>
+            <div class="monitor-chart-grid__series" id="expanded-series-area">
+              <svg preserveAspectRatio="none" id="expanded-svg">
+                <g id="expanded-grid-lines"></g>
+                <polyline id="expanded-line" fill="none" stroke="var(--primary)" stroke-width="2" vector-effect="non-scaling-stroke" opacity="0.3" points="" />
+                <polyline id="expanded-smooth-line" fill="none" stroke="var(--primary)" stroke-width="2" vector-effect="non-scaling-stroke" points="" />
+              </svg>
+              <!-- Hover dot (HTML overlay — avoids SVG distortion) -->
+              <div id="expanded-hover-dots" style="display:none; position:absolute; inset:0; pointer-events:none; z-index:5;">
+                <div id="expanded-dot" class="chart-hover-dot chart-hover-dot--smooth"></div>
+              </div>
+              <div id="expanded-crosshair" style="display:none; position:absolute; top:0; bottom:0; width:1px; background:var(--muted); opacity:0.5; pointer-events:none; z-index:3;"></div>
+              <div id="expanded-tooltip" class="chart-tooltip--tb" style="display:none;"></div>
+              <div class="chart-zoom-hint" data-hint="Alt + Scroll to Zoom"></div>
+            </div>
+            <div class="monitor-chart-grid__dot"></div>
+            <div class="monitor-chart-grid__xaxis" id="expanded-x-labels"></div>
+            <div class="monitor-chart-grid__yaxis-r" style="visibility:hidden;"></div>
+          </div>
+        </div>
+
+        <!-- Mini-charts for additional TensorBoard scalars (dynamically populated) -->
+        <div id="monitor-mini-charts" class="monitor-mini-charts"></div>
+
+        <!-- Stats row (full-width) -->
+        <div class="stats-row" style="margin-bottom: var(--space-lg);">
+          <div class="stat"><div class="stat__label">Current Loss</div><div class="stat__value" id="monitor-loss">--</div></div>
+          <div class="stat"><div class="stat__label">Best Loss</div><div class="stat__value stat__value--success" id="monitor-best-loss">--</div></div>
+          <div class="stat"><div class="stat__label">Best Epoch</div><div class="stat__value" id="monitor-best-epoch">--</div></div>
+          <div class="stat"><div class="stat__label">Learning Rate</div><div class="stat__value" id="monitor-lr">--</div></div>
+          <div class="stat"><div class="stat__label">MA5</div><div class="stat__value" id="monitor-ma5">--</div></div>
+        </div>
+
+        <!-- Main two-panel: Controls/Log + GPU -->
         <div class="monitor-grid">
 
-          <!-- Left: Loss chart + stats -->
+          <!-- Left: Controls + Log -->
           <div>
-            <div class="panel" style="margin-bottom: var(--space-md);">
-              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-sm);">
-                <div class="panel__title" style="margin-bottom: 0;">Loss</div>
-                <div class="chart-toolbar">
-                  <div class="chart-toolbar__group">
-                    <button class="btn btn--sm chart-toggle active" data-series="loss" aria-pressed="true">Loss</button>
-                    <button class="btn btn--sm chart-toggle active" data-series="ma5" aria-pressed="true">MA5</button>
-                    <button class="btn btn--sm chart-toggle active" data-series="lr" aria-pressed="true">LR</button>
-                  </div>
-                  <div class="chart-toolbar__group">
-                    <button class="btn btn--sm chart-axis" data-axis="step" aria-pressed="false">per Step</button>
-                    <button class="btn btn--sm chart-axis active" data-axis="epoch" aria-pressed="true">per Epoch</button>
-                  </div>
-                  <div class="chart-toolbar__group" style="display: flex; align-items: center; gap: 4px;">
-                    <span style="font-size: 10px; color: var(--muted);">Smooth</span>
-                    <input type="range" id="chart-smoothing" min="0" max="99" value="60" style="width: 60px; height: 14px; accent-color: var(--primary);">
-                    <span id="chart-smoothing-val" style="font-size: 10px; color: var(--muted); min-width: 28px;">0.6</span>
-                  </div>
-                  <div class="chart-toolbar__group">
-                    <button class="btn btn--sm chart-zoom" data-zoom="reset" title="Fit to data (reset zoom)">⊡</button>
-                  </div>
-                </div>
-              </div>
-              <div class="chart-area" style="min-height: 240px; position: relative; overflow: hidden;" id="monitor-chart-area">
-                <!-- Y-axis labels LEFT (loss scale) -->
-                <div id="monitor-y-labels" style="position: absolute; left: 0; top: 0; bottom: 20px; width: 48px; z-index: 2; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none;"></div>
-                <!-- Y-axis labels RIGHT (LR scale) -->
-                <div id="monitor-y-labels-right" style="position: absolute; right: 0; top: 0; bottom: 20px; width: 52px; z-index: 2; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none;"></div>
-                <!-- X-axis labels -->
-                <div id="monitor-x-labels" class="axis-label-row" style="position: absolute; left: 48px; right: 52px; bottom: 0; z-index: 2; pointer-events: none;"></div>
-                <!-- Legend (HTML) -->
-                <div id="monitor-legend" style="position: absolute; top: 6px; right: 60px; z-index: 2; display: flex; gap: 12px; font-size: 11px; font-family: var(--font-mono); pointer-events: none;">
-                  <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 16px; height: 2px; background: var(--primary);"></span><span style="color: var(--primary);">Loss</span></span>
-                  <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 16px; height: 0; border-top: 2px dashed var(--changed);"></span><span style="color: var(--changed);">MA5</span></span>
-                  <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 16px; height: 0; border-top: 2px dotted var(--secondary);"></span><span style="color: var(--secondary);">LR</span></span>
-                </div>
-                <!-- SVG: gridlines + data polylines -->
-                <svg style="position: absolute; left: 48px; top: 0; right: 52px; bottom: 20px; width: calc(100% - 100px); height: calc(100% - 20px);" preserveAspectRatio="none" id="monitor-loss-svg">
-                  <g id="monitor-grid-lines"></g>
-                  <polyline id="monitor-loss-raw" fill="none" stroke="var(--primary)" stroke-width="1" vector-effect="non-scaling-stroke" opacity="0.2" points="" />
-                  <polyline id="monitor-loss-line" fill="none" stroke="var(--primary)" stroke-width="1.2" vector-effect="non-scaling-stroke" points="" />
-                  <polyline id="monitor-ma-line" fill="none" stroke="var(--changed)" stroke-width="1" stroke-dasharray="4,4" vector-effect="non-scaling-stroke" opacity="0.7" points="" />
-                  <polyline id="monitor-lr-line" fill="none" stroke="var(--secondary)" stroke-width="0.9" stroke-dasharray="2,3" vector-effect="non-scaling-stroke" opacity="0.85" points="" />
-                </svg>
-                <!-- Drag-zoom overlay (shown while dragging) -->
-                <div id="chart-drag-overlay" style="display:none; position:absolute; background:rgba(92,207,230,0.12); border:1px solid var(--primary); pointer-events:none; z-index:4;"></div>
-                <!-- Crosshair + tooltip -->
-                <div id="chart-crosshair" style="display:none; position:absolute; top:0; bottom:20px; width:1px; background:var(--muted); opacity:0.5; pointer-events:none; z-index:3;"></div>
-                <div id="chart-tooltip" style="display:none; position:absolute; z-index:5; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:4px 8px; font-size:10px; font-family:var(--font-mono); pointer-events:none; white-space:nowrap;"></div>
-              </div>
-            </div>
-
-            <!-- Stats row -->
-            <div class="stats-row" style="margin-bottom: var(--space-lg);">
-              <div class="stat"><div class="stat__label">Current Loss</div><div class="stat__value" id="monitor-loss">--</div></div>
-              <div class="stat"><div class="stat__label">Best Loss</div><div class="stat__value stat__value--success" id="monitor-best-loss">--</div></div>
-              <div class="stat"><div class="stat__label">Best Epoch</div><div class="stat__value" id="monitor-best-epoch">--</div></div>
-              <div class="stat"><div class="stat__label">Learning Rate</div><div class="stat__value" id="monitor-lr">--</div></div>
-              <div class="stat"><div class="stat__label">MA5</div><div class="stat__value" id="monitor-ma5">--</div></div>
-            </div>
-
             <!-- Controls (toggled, never destroyed) -->
             <div id="monitor-controls" style="display: flex; gap: var(--space-md); margin-bottom: var(--space-lg);">
               <button class="btn btn--danger" id="btn-stop">Stop Training</button>
@@ -1695,7 +1832,7 @@
               <div class="panel__title" style="margin:0;">Loss Curves (overlaid)</div>
               <div style="display:flex;align-items:center;gap:var(--space-sm);font-size:var(--font-size-xs);color:var(--muted);">
                 <span>Smooth</span>
-                <input type="range" min="0" max="95" value="0" id="compare-smoothing" style="width:80px;">
+                <input type="range" min="0" max="999" value="0" id="compare-smoothing" style="width:80px;">
                 <span id="compare-smoothing-val" style="font-family:var(--font-mono);min-width:28px;">0.00</span>
                 <button class="btn btn--sm" id="btn-compare-zoom-reset" title="Reset zoom">↺</button>
               </div>
@@ -1705,9 +1842,7 @@
               <div id="compare-y-labels" style="display:flex;flex-direction:column;justify-content:space-between;padding:4px 0;min-width:44px;text-align:right;"></div>
               <div class="chart-area" style="min-height: 200px; flex: 1; position:relative;" id="compare-chart-area">
                 <svg viewBox="0 0 400 160" style="width: 100%; height: 100%;" preserveAspectRatio="none" id="compare-loss-svg">
-                  <line x1="0" y1="40"  x2="400" y2="40"  stroke="var(--border)" stroke-width="0.5" />
-                  <line x1="0" y1="80"  x2="400" y2="80"  stroke="var(--border)" stroke-width="0.5" />
-                  <line x1="0" y1="120" x2="400" y2="120" stroke="var(--border)" stroke-width="0.5" />
+                  <g id="compare-grid-lines"></g>
                   <polyline id="compare-raw-a" fill="none" stroke="var(--primary)" stroke-width="0.9" opacity="0.2" points="" />
                   <polyline id="compare-raw-b" fill="none" stroke="var(--warning)" stroke-width="0.9" opacity="0.2" points="" />
                   <polyline id="compare-line-a" fill="none" stroke="var(--primary)" stroke-width="1.3" points="" />
@@ -1979,7 +2114,9 @@
                   <option value="openai">OpenAI / Compatible</option>
                   <option value="local_8-10gb">Local 8-10GB (Qwen2.5-Omni 4-bit)</option>
                   <option value="local_16gb">Local 16GB+ (Qwen2.5-Omni bf16)</option>
+                  <option value="music_flamingo">Music Flamingo</option>
                   <option value="lyrics_only">Lyrics only</option>
+                  <option value="none">None</option>
                 </select>
               </div>
               <div class="form-group" style="flex: 1;">
@@ -1987,6 +2124,7 @@
                 <select class="select" id="caption-overwrite">
                   <option value="fill_missing" selected>Fill missing only</option>
                   <option value="overwrite_caption">Overwrite captions only</option>
+                  <option value="overwrite_lyrics">Overwrite lyrics only</option>
                   <option value="overwrite_all">Overwrite all fields</option>
                 </select>
               </div>
@@ -2006,6 +2144,14 @@
                 <span style="color: var(--muted);">Genius:</span>
                 <span class="api-key-badge" id="caption-genius-badge" style="color: var(--muted);">not set</span>
               </div>
+              <div>
+                <span style="color: var(--muted);">Transcriber Server:</span>
+                <span class="api-key-badge" id="caption-transcriber-badge" style="color: var(--muted);">not set</span>
+              </div>
+              <div>
+                <span style="color: var(--muted);">Music Flamingo:</span>
+                <span class="api-key-badge" id="caption-music-flamingo-badge" style="color: var(--muted);">not set</span>
+              </div>
               <a href="#" id="caption-open-settings" style="color: var(--primary); font-size: var(--font-size-sm);">Configure in Settings</a>
             </div>
 
@@ -2013,11 +2159,25 @@
             <div id="caption-gemini-settings">
               <div class="form-group">
                 <label class="form-group__label">Gemini Model</label>
-                <select class="select" id="caption-gemini-model">
-                  <option value="gemini-2.0-flash" selected>gemini-2.0-flash</option>
-                  <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite</option>
-                  <option value="gemini-1.5-pro">gemini-1.5-pro</option>
-                </select>
+                <input class="input" type="text" id="caption-gemini-model" list="gemini-model-suggestions" value="gemini-2.5-flash" placeholder="gemini-2.5-flash">
+                <datalist id="gemini-model-suggestions">
+                  <option value="gemini-2.5-flash">
+                  <option value="gemini-2.5-flash-lite">
+                  <option value="gemini-2.5-pro">
+                  <option value="gemini-3-flash-preview">
+                  <option value="gemini-3.1-flash-lite-preview">
+                  <option value="gemini-3.1-pro-preview">
+                </datalist>
+              </div>
+              <div class="form-group" style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-md);margin-bottom:var(--space-md);">
+                <div>
+                  <label class="form-group__label" for="caption-gemini-google-search" style="margin-bottom:2px;">Enable Google Search</label>
+                  <div class="hint">Let Gemini look up track info online to enrich captions. Audio analysis still takes priority. Adds a small per-query cost.</div>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="caption-gemini-google-search">
+                  <span class="toggle__track"></span>
+                </label>
               </div>
             </div>
 
@@ -2026,7 +2186,18 @@
               <div class="form-row">
                 <div class="form-group" style="flex: 1;">
                   <label class="form-group__label">OpenAI Model</label>
-                  <input class="input" type="text" id="caption-openai-model" value="gpt-4o-mini">
+                  <input class="input" type="text" id="caption-openai-model" list="openai-model-suggestions" value="gpt-4o-audio-preview">
+                  <datalist id="openai-model-suggestions">
+                    <option value="gpt-4o">
+                    <option value="gpt-4o-audio-preview">
+                    <option value="gpt-4o-mini">
+                    <option value="gpt-4o-mini-audio-preview">
+                    <option value="gpt-4.1">
+                    <option value="gpt-4.1-mini">
+                    <option value="gpt-audio">
+                    <option value="gpt-audio-1.5">
+                    <option value="gpt-audio-mini">
+                  </datalist>
                 </div>
                 <div class="form-group" style="flex: 1;">
                   <label class="form-group__label">Base URL (empty = default)</label>
@@ -2043,6 +2214,26 @@
                 First run will download the model from HuggingFace.<br>
                 <span style="color: var(--muted);">Tip:</span> Run the installer script again to pre-download.
               </div>
+              <div class="form-group" style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-md);margin-bottom:var(--space-md);">
+                <div>
+                  <label class="form-group__label" for="caption-local-cpu-offload" style="margin-bottom:2px;">Allow CPU offload if GPU memory is insufficient</label>
+                  <div class="hint">Slower, but can keep local captioning usable when the full model does not fit entirely in VRAM.</div>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="caption-local-cpu-offload">
+                  <span class="toggle__track"></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-group__label">Lyrics Provider</label>
+              <select class="select" id="caption-lyrics-provider">
+                <option value="genius" selected>Genius</option>
+                <option value="transcriber_server">Transcriber Server</option>
+                <option value="music_flamingo">Music Flamingo</option>
+                <option value="none">None</option>
+              </select>
             </div>
 
             <!-- Default Artist -->
@@ -2092,9 +2283,9 @@
             </label>
             <div class="input-with-browse">
               <select class="select model-picker" id="pp-model-variant">
-                <option value="turbo" selected>turbo</option>
-                <option value="base">base</option>
+                <option value="base" selected>base</option>
                 <option value="sft">sft</option>
+                <option value="turbo">turbo</option>
               </select>
               <button class="btn btn--sm btn--refresh" title="Refresh model list">R</button>
             </div>
@@ -2250,9 +2441,9 @@
             </label>
             <div class="input-with-browse">
               <select class="select model-picker" id="ppplus-model-variant">
-                <option value="turbo" selected>turbo</option>
-                <option value="base">base</option>
+                <option value="base" selected>base</option>
                 <option value="sft">sft</option>
+                <option value="turbo">turbo</option>
               </select>
               <button class="btn btn--sm btn--refresh" title="Refresh model list">R</button>
             </div>
@@ -2538,7 +2729,15 @@
       </div>
       <div class="form-group">
         <label class="form-group__label">Gemini Model</label>
-        <input class="input" type="text" id="settings-gemini-model" value="gemini-2.0-flash" placeholder="gemini-2.0-flash">
+        <input class="input" type="text" id="settings-gemini-model" list="settings-gemini-model-suggestions" value="gemini-2.5-flash" placeholder="gemini-2.5-flash">
+        <datalist id="settings-gemini-model-suggestions">
+          <option value="gemini-2.5-flash">
+          <option value="gemini-2.5-flash-lite">
+          <option value="gemini-2.5-pro">
+          <option value="gemini-3-flash-preview">
+          <option value="gemini-3.1-flash-lite-preview">
+          <option value="gemini-3.1-pro-preview">
+        </datalist>
       </div>
       <div class="form-group">
         <label class="form-group__label">OpenAI API Key</label>
@@ -2556,6 +2755,21 @@
         <label class="form-group__label">Genius API Token</label>
         <input class="input" type="password" id="settings-genius-token" placeholder="Not set">
         <div class="hint">For automatic lyrics fetching</div>
+      </div>
+      <div class="form-group">
+        <label class="form-group__label">Transcriber Server URL</label>
+        <input class="input" type="text" id="settings-transcriber-server-url" placeholder="http://127.0.0.1:8000">
+        <div class="hint">Local or remote HTTP server used by the Transcriber Server lyrics provider</div>
+      </div>
+      <div class="form-group">
+        <label class="form-group__label">Music Flamingo URL</label>
+        <input class="input" type="text" id="settings-music-flamingo-url" placeholder="https://...">
+        <div class="hint">Local or remote Music Flamingo endpoint (local server, custom HTTP, Hugging Face, or Gradio Space)</div>
+      </div>
+      <div class="form-group">
+        <label class="form-group__label">Hugging Face Token</label>
+        <input class="input" type="password" id="settings-hf-token" placeholder="Optional bearer token for Music Flamingo auth">
+        <div class="hint">Used for authenticated Music Flamingo calls when needed</div>
       </div>
 
       <div class="section-header" id="settings-visual-section" style="display:none;">Visual</div>

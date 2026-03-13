@@ -41,6 +41,10 @@ from sidestep_engine.training_defaults import (
     DEFAULT_DROPOUT,
     DEFAULT_EARLY_STOP_PATIENCE,
     DEFAULT_EMA_DECAY,
+    DEFAULT_TARGET_LOSS,
+    DEFAULT_TARGET_LOSS_FLOOR,
+    DEFAULT_TARGET_LOSS_WARMUP,
+    DEFAULT_TARGET_LOSS_SMOOTHING,
     DEFAULT_EPOCHS,
     DEFAULT_GRADIENT_ACCUMULATION,
     DEFAULT_GRADIENT_CHECKPOINTING,
@@ -82,6 +86,7 @@ from sidestep_engine.training_defaults import (
     DEFAULT_SNR_GAMMA,
     DEFAULT_STRICT_RESUME,
     DEFAULT_TARGET_MLP,
+    DEFAULT_TIMESTEP_MODE,
     DEFAULT_ADAPTIVE_TIMESTEP_RATIO,
     DEFAULT_VAL_SPLIT,
     DEFAULT_WARMUP_START_FACTOR,
@@ -274,7 +279,7 @@ def build_training_config(
                 budget.get("max", 128),
             )
 
-            lr = _get(p, "learning_rate", DEFAULT_LEARNING_RATE)
+            lr = float(_get(p, "learning_rate", DEFAULT_LEARNING_RATE))
             if lr > PP_LR_WARN_THRESHOLD:
                 logger.warning(
                     "[Side-Step] Preprocessing++ is active with lr=%.1e. "
@@ -356,6 +361,10 @@ def build_training_config(
         save_best=_get(p, "save_best", DEFAULT_SAVE_BEST),
         save_best_after=_get(p, "save_best_after", DEFAULT_SAVE_BEST_AFTER),
         early_stop_patience=_get(p, "early_stop_patience", DEFAULT_EARLY_STOP_PATIENCE),
+        target_loss=_get(p, "target_loss", DEFAULT_TARGET_LOSS),
+        target_loss_floor=_get(p, "target_loss_floor", DEFAULT_TARGET_LOSS_FLOOR),
+        target_loss_warmup=_get(p, "target_loss_warmup", DEFAULT_TARGET_LOSS_WARMUP),
+        target_loss_smoothing=_get(p, "target_loss_smoothing", DEFAULT_TARGET_LOSS_SMOOTHING),
         cfg_ratio=_get(p, "cfg_ratio", DEFAULT_CFG_RATIO),
         loss_weighting=_get(p, "loss_weighting", DEFAULT_LOSS_WEIGHTING),
         snr_gamma=_get(p, "snr_gamma", DEFAULT_SNR_GAMMA),
@@ -380,11 +389,14 @@ def build_training_config(
         max_duration=_get(p, "max_duration", 0),
         normalize=_get(p, "normalize", "none"),
         chunk_duration=_get(p, "chunk_duration") or None,
+        max_latent_length=_get(p, "max_latent_length") or None,
+        crop_mode=_get(p, "crop_mode") or None,
         chunk_decay_every=_get(p, "chunk_decay_every", DEFAULT_CHUNK_DECAY_EVERY),
         dataset_repeats=_get(p, "dataset_repeats", DEFAULT_DATASET_REPEATS),
         max_steps=_get(p, "max_steps", DEFAULT_MAX_STEPS),
         ema_decay=_get(p, "ema_decay", DEFAULT_EMA_DECAY),
         val_split=_get(p, "val_split", DEFAULT_VAL_SPLIT),
+        timestep_mode=_get(p, "timestep_mode", DEFAULT_TIMESTEP_MODE),
         adaptive_timestep_ratio=_get(p, "adaptive_timestep_ratio", DEFAULT_ADAPTIVE_TIMESTEP_RATIO),
         warmup_start_factor=_get(p, "warmup_start_factor", DEFAULT_WARMUP_START_FACTOR),
         cosine_eta_min_ratio=_get(p, "cosine_eta_min_ratio", DEFAULT_COSINE_ETA_MIN_RATIO),

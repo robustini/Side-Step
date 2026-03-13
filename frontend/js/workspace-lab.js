@@ -5,6 +5,45 @@ const WorkspaceLab = (() => {
 
   const _e = window._esc;
 
+  async function _notifyDesktop(title, body) {
+    const bridge = window.sidestepElectron;
+    if (bridge && typeof bridge.notify === "function") {
+      try {
+        await bridge.notify(String(title || "Side-Step"), String(body || ""));
+        return true;
+      } catch (err) {
+        console.warn("[notify] electron notification failed:", err);
+      }
+    }
+
+    if (typeof Notification === "undefined") return false;
+    try {
+      if (Notification.permission === "granted") {
+        new Notification(String(title || "Side-Step"), { body: String(body || "") });
+        return true;
+      }
+      if (Notification.permission !== "denied") {
+        const perm = await Notification.requestPermission();
+        if (perm === "granted") {
+          new Notification(String(title || "Side-Step"), { body: String(body || "") });
+          return true;
+        }
+      }
+    } catch (err) {
+      console.warn("[notify] browser notification failed:", err);
+    }
+    return false;
+  }
+
+  function _showCaptionOOMAlert(message) {
+    const text = String(message || "Local captioning ran out of GPU memory. Enable CPU offload or switch tiers.");
+    if (typeof WorkspaceBehaviors !== "undefined" && WorkspaceBehaviors.showConfirmModal) {
+      WorkspaceBehaviors.showConfirmModal("Local Caption OOM", text, "OK", () => {}, () => {});
+      return;
+    }
+    alert(text);
+  }
+
   /* ---- Shared task WS streaming ---- */
   const _tasks = {};  // { pp: { ws, taskId }, ppplus: ..., captions: ... }
   let _resumeBaseConfig = null;
@@ -629,12 +668,14 @@ const WorkspaceLab = (() => {
   /* ---- AI Captions ---- */
   function _updateCaptionButtonLabels() {
     const prov = $("caption-provider")?.value;
-    const isLyrics = prov === "lyrics_only";
+    const lyricsProv = $("caption-lyrics-provider")?.value || "none";
+    const isLyrics = prov === "lyrics_only" || ((prov === "none") && lyricsProv !== "none");
+    const isNone = prov === "none" && lyricsProv === "none";
     const isLocal = prov === "local_8-10gb" || prov === "local_16gb";
     const genBtn = $("btn-gen-captions");
     const runBtn = $("btn-run-captions");
-    const label = isLyrics ? "Fetch Lyrics" : isLocal ? "Run Local Captions" : "Generate AI Captions";
-    const runLabel = isLyrics ? "Fetch Lyrics" : isLocal ? "Run Local Captions" : "Run AI Captions";
+    const label = isLyrics ? "Fetch Lyrics" : isNone ? "Run Enrichment" : isLocal ? "Run Local Captions" : "Generate AI Captions";
+    const runLabel = isLyrics ? "Fetch Lyrics" : isNone ? "Run Enrichment" : isLocal ? "Run Local Captions" : "Run AI Captions";
     if (genBtn) genBtn.textContent = label;
     if (runBtn) runBtn.textContent = runLabel;
   }
@@ -662,6 +703,10 @@ const WorkspaceLab = (() => {
       $("settings-panel")?.classList.add("open");
     });
 
+    $("caption-lyrics-provider")?.addEventListener("change", () => {
+      _updateCaptionButtonLabels();
+    });
+
     $("btn-gen-captions")?.addEventListener("click", () => {
       // Expand and scroll to the AI Caption Generation section within Audio Library
       const panel = $("ai-caption-panel");
@@ -673,25 +718,45 @@ const WorkspaceLab = (() => {
       setTimeout(() => panel.scrollIntoView({ behavior: "smooth", block: "nearest" }), 80);
     });
 
+    const _MASK_CHAR = "•";
+    const _isMaskedRuntimeSecret = (v) => (typeof v === "string" && v.length > 0 && /^[\u2022\s]+$/.test(v));
+    const _unmaskRuntimeSecret = (v) => (_isMaskedRuntimeSecret(v) ? "" : v);
+
     $("btn-run-captions")?.addEventListener("click", async () => {
       const provider = $("caption-provider")?.value;
-      if (provider === "lyrics_only") {
+      const lyricsProvider = $("caption-lyrics-provider")?.value || (provider === "lyrics_only" ? "genius" : "none");
+      if (lyricsProvider === "genius") {
         const geniusToken = ($("settings-genius-token")?.value || "").trim();
         if (!geniusToken) { showToast("Genius token not configured — set it in Settings", "warn"); return; }
+      }
+      if (lyricsProvider === "transcriber_server") {
+        const transcriberUrl = ($("settings-transcriber-server-url")?.value || "").trim();
+        if (!transcriberUrl) { showToast("Transcriber Server URL not configured — set it in Settings", "warn"); return; }
+      }
+      if (provider === "music_flamingo") {
+        const musicFlamingoUrl = ($("settings-music-flamingo-url")?.value || "").trim();
+        if (!musicFlamingoUrl) { showToast("Music Flamingo URL not configured — set it in Settings", "warn"); return; }
       }
       // Use selected files if there's a selection, otherwise process whole directory
       const selectedPaths = (typeof Dataset !== "undefined" && Dataset.hasSelection()) ? Dataset.getSelectedAudioPaths() : [];
       const config = {
+        metadata_provider: provider,
         provider: provider,
+        lyrics_provider: lyricsProvider,
         overwrite: $("caption-overwrite")?.value,
         gemini_key: $("settings-gemini-key")?.value,
         gemini_model: $("caption-gemini-model")?.value,
         openai_key: $("settings-openai-key")?.value,
         openai_model: $("caption-openai-model")?.value,
         openai_base: $("caption-openai-base")?.value || $("settings-openai-base")?.value,
-        genius_token: $("settings-genius-token")?.value,
+        genius_token: _unmaskRuntimeSecret($("settings-genius-token")?.value),
+        transcriber_server_url: $("settings-transcriber-server-url")?.value,
+        music_flamingo_url: $("settings-music-flamingo-url")?.value,
+        hf_token: _unmaskRuntimeSecret($("settings-hf-token")?.value),
         default_artist: $("caption-default-artist")?.value,
         dataset_dir: $("lab-dataset-path")?.value,
+        caption_local_cpu_offload: !!$("caption-local-cpu-offload")?.checked,
+        gemini_google_search: !!$("caption-gemini-google-search")?.checked,
       };
       if (selectedPaths.length) {
         config.audio_files = selectedPaths;
@@ -708,6 +773,13 @@ const WorkspaceLab = (() => {
       const _finish = (msg) => {
         $("btn-run-captions").style.display = "inline-block";
         $("btn-stop-captions").style.display = "none";
+        if (msg?.error_code === "local_caption_oom") {
+          const reason = msg?.msg || msg?.error || "Local captioning ran out of GPU memory. Enable CPU offload or switch tiers.";
+          showToast("AI Captions cancelled due to local OOM", "error");
+          _showCaptionOOMAlert(reason);
+          _notifyDesktop("Side-Step: Local Caption OOM", reason).catch(() => {});
+          return;
+        }
         if (msg && msg.type === "cancelled") { showToast("AI Captions cancelled", "warn"); return; }
         const payload = msg?.result || msg || {};
         if (payload.written != null) written = payload.written;
@@ -841,6 +913,9 @@ const WorkspaceLab = (() => {
     _syncCanonicalAudioPaths();
     document.addEventListener("sidestep:settings-saved", () => {
       _syncCanonicalAudioPaths();
+      // Sync settings model into caption panel
+      const gm = $("settings-gemini-model")?.value;
+      if (gm) { const el = $("caption-gemini-model"); if (el) el.value = gm; }
     });
     document.addEventListener("sidestep:dataset-scanned", () => {
       _updateCaptionButtonStates();

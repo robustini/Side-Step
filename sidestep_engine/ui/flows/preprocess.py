@@ -47,7 +47,7 @@ def _step_model(a: dict) -> None:
     if result is None:
         show_model_picker_fallback_hint()
         a["model_variant"] = ask(
-            "Model variant or folder name", default=a.get("model_variant", "turbo"),
+            "Model variant or folder name", default=a.get("model_variant", "base"),
             allow_back=True,
         )
         a["base_model"] = a["model_variant"]

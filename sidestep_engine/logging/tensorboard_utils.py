@@ -102,7 +102,7 @@ class TrainingLogger:
         if self._enabled:
             log_dir = Path(log_dir)
             log_dir.mkdir(parents=True, exist_ok=True)
-            self._writer = SummaryWriter(log_dir=str(log_dir), flush_secs=30)
+            self._writer = SummaryWriter(log_dir=str(log_dir), flush_secs=5)
             logger.info("[OK] TensorBoard logger initialised at %s", log_dir)
         else:
             if enabled and not _TB_AVAILABLE:

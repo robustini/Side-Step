@@ -163,7 +163,7 @@ class EstimateConfigScreen(Screen):
                 yield Static("Checkpoint Directory:", classes="form-label")
                 with Horizontal(classes="form-input"):
                     yield Input(
-                        placeholder="./checkpoints/acestep-v15-turbo",
+                        placeholder="./checkpoints/acestep-v15-base",
                         id="input-checkpoint-dir",
                     )
                     yield Button("...", id="btn-browse-checkpoint", variant="default")
@@ -173,9 +173,9 @@ class EstimateConfigScreen(Screen):
             with Horizontal(classes="form-row"):
                 yield Static("Model Variant:", classes="form-label")
                 with RadioSet(id="radio-variant"):
-                    yield RadioButton("Turbo", value=True, id="variant-turbo")
-                    yield RadioButton("Base", id="variant-base")
+                    yield RadioButton("Base", value=True, id="variant-base")
                     yield RadioButton("SFT", id="variant-sft")
+                    yield RadioButton("Turbo", id="variant-turbo")
             
             # Dataset directory
             with Horizontal(classes="form-row"):
@@ -268,15 +268,15 @@ class EstimateConfigScreen(Screen):
     def _get_selected_variant(self) -> str:
         """Get the selected model variant."""
         try:
-            if self.query_one("#variant-turbo", RadioButton).value:
-                return "turbo"
-            elif self.query_one("#variant-base", RadioButton).value:
+            if self.query_one("#variant-base", RadioButton).value:
                 return "base"
+            elif self.query_one("#variant-turbo", RadioButton).value:
+                return "turbo"
             elif self.query_one("#variant-sft", RadioButton).value:
                 return "sft"
         except Exception:
             pass
-        return "turbo"
+        return "base"
     
     def _validate(self) -> Optional[str]:
         """Validate form inputs. Returns error message or None."""

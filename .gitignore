@@ -32,3 +32,6 @@ tests/
 estimate_results.json
 mstrct1.json
 uv.lock
+
+# Stale duplicate preset directory (use assets/presets/ instead)
+presets/

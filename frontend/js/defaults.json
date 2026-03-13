@@ -38,10 +38,13 @@
   "full-cfg-dropout":         "0.15",
   "full-loss-weighting":      "none",
   "full-snr-gamma":           "5.0",
+  "full-timestep-mode":       "continuous",
 
   "full-offload-encoder":     true,
   "full-grad-ckpt-ratio":     "1.0",
+  "full-crop-mode":           "full",
   "full-chunk-duration":      "0",
+  "full-max-latent-length":   "0",
   "full-chunk-decay-every":   "10",
 
   "full-optimizer":           "adamw8bit",

@@ -328,12 +328,38 @@ const History = (() => {
       ...smoothSeriesA.val, ...smoothSeriesB.val,
     ];
     if (!all.length) return;
-    const rawMax = Math.max(...all), rawMin = Math.min(...all);
-    const yPad = (rawMax - rawMin) * 0.08 || 0.001;
-    const maxLoss = rawMax + yPad, minLoss = Math.max(0, rawMin - yPad);
+
+    // TB-faithful Y-domain: P5-P95, padding, nice boundaries
+    const sorted = all.slice().sort((a, b) => a - b);
+    let domLo = sorted[0], domHi = sorted[sorted.length - 1];
+    if (sorted.length > 2) {
+      domLo = sorted[Math.ceil((sorted.length - 1) * 0.05)];
+      domHi = sorted[Math.floor((sorted.length - 1) * 0.95)];
+    }
+    if (domHi === domLo) {
+      if (domLo === 0) { domLo = -1; domHi = 1; }
+      else if (domLo < 0) { domLo = 2 * domLo; domHi = 0; }
+      else { domLo = 0; domHi = 2 * domHi; }
+    }
+    const PADDING_RATIO = 0.05;
+    const yPadding = (domHi - domLo + Number.EPSILON) * PADDING_RATIO;
+    let padLo = domLo - yPadding, padHi = domHi + yPadding;
+    // d3-like nice domain
+    const Y_GRID_COUNT = 6;
+    const rawStep = (padHi - padLo) / (Y_GRID_COUNT - 1);
+    const nExp = Math.floor(Math.log10(rawStep));
+    const nFrac = rawStep / Math.pow(10, nExp);
+    let niceStep = nFrac <= 1 ? 1 : nFrac <= 2 ? 2 : nFrac <= 5 ? 5 : 10;
+    niceStep *= Math.pow(10, nExp);
+    const minLoss = Math.floor(padLo / niceStep) * niceStep;
+    const maxLoss = Math.ceil(padHi / niceStep) * niceStep;
+    const yTicks = [];
+    for (let v = minLoss; v <= maxLoss + niceStep * 0.5; v += niceStep) {
+      yTicks.push(parseFloat(v.toPrecision(12)));
+    }
 
     const w = 400, h = 160, pad = 4;
-    const toY = (v) => pad + ((maxLoss - v) / (maxLoss - minLoss)) * (h - 2 * pad);
+    const toY = (v) => pad + ((maxLoss - v) / (maxLoss - minLoss || 1)) * (h - 2 * pad);
     const toX = (idx) => pad + ((idx - lo) / Math.max(1, hi - lo)) * (w - 2 * pad);
     const makePts = (idx, val) => idx.map((epoch, i) => {
       const x = toX(epoch);
@@ -360,12 +386,37 @@ const History = (() => {
     _setEndMarker(endA, _cCurveA.length);
     _setEndMarker(endB, _cCurveB.length);
 
-    // Y-axis labels
+    // Grid lines (dynamic, subtle — matching training charts)
+    const gridG = $('compare-grid-lines');
+    if (gridG) {
+      let gridHTML = '';
+      const ySpacing = yTicks.length > 1 ? Math.abs(yTicks[1] - yTicks[0]) : 1;
+      yTicks.forEach(tick => {
+        const y = toY(tick).toFixed(1);
+        const isZero = Math.abs(tick) < ySpacing * 0.01;
+        const sw = isZero ? '1.5' : '1';
+        const color = isZero ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.08)';
+        gridHTML += `<line x1="${pad}" y1="${y}" x2="${w - pad}" y2="${y}" stroke="${color}" stroke-width="${sw}" vector-effect="non-scaling-stroke" />`;
+      });
+      // Vertical grid lines
+      const loTick = Math.max(0, Math.floor(lo));
+      const hiTick = Math.max(loTick + 1, Math.ceil(hi));
+      const svgWidth = $('compare-loss-svg')?.getBoundingClientRect?.().width || 400;
+      const vTicks = _buildXTicks(loTick, hiTick, svgWidth);
+      vTicks.forEach(tick => {
+        const x = toX(tick).toFixed(1);
+        gridHTML += `<line x1="${x}" y1="${pad}" x2="${x}" y2="${h - pad}" stroke="rgba(255,255,255,0.08)" stroke-width="1" vector-effect="non-scaling-stroke" />`;
+      });
+      gridG.innerHTML = gridHTML;
+    }
+
+    // Y-axis labels (from nice ticks)
     const yLabels = $('compare-y-labels');
     if (yLabels) {
-      const prec = maxLoss < 0.01 ? 4 : 3;
-      yLabels.innerHTML = [maxLoss, (maxLoss + minLoss) / 2, minLoss].map(v =>
-        '<span class="u-axis-label">' + v.toFixed(prec) + '</span>'
+      const fmt = (v) => Math.abs(v) >= 1000 ? v.toFixed(0) :
+        Math.abs(v) >= 1 ? v.toFixed(2) : v.toPrecision(3);
+      yLabels.innerHTML = yTicks.slice().reverse().map(t =>
+        '<span class="u-axis-label">' + fmt(t) + '</span>'
       ).join('');
     }
     // X-axis labels
@@ -373,8 +424,8 @@ const History = (() => {
     if (xLabels) {
       const loTick = Math.max(0, Math.floor(lo));
       const hiTick = Math.max(loTick + 1, Math.ceil(hi));
-      const width = $('compare-loss-svg')?.getBoundingClientRect?.().width || 400;
-      const ticks = _buildXTicks(loTick, hiTick, width);
+      const svgWidth = $('compare-loss-svg')?.getBoundingClientRect?.().width || 400;
+      const ticks = _buildXTicks(loTick, hiTick, svgWidth);
       xLabels.innerHTML = ticks.map((t) => {
         const left = ((t - lo) / Math.max(1, hi - lo)) * 100;
         return `<span class="axis-label-row__tick" style="left:${left.toFixed(3)}%;">${t}</span>`;
@@ -476,7 +527,7 @@ const History = (() => {
     const slider = $('compare-smoothing');
     const sVal = $('compare-smoothing-val');
     if (slider) slider.addEventListener('input', () => {
-      _cSmoothing = parseInt(slider.value, 10) / 100;
+      _cSmoothing = parseInt(slider.value, 10) / 1000;
       if (sVal) sVal.textContent = _cSmoothing.toFixed(2);
       _renderOverlaidCurves();
     });
@@ -492,9 +543,7 @@ const History = (() => {
         zoomReset: _compareZoomReset, formatTip: _compareFormatTip,
         minRange: 16,
         zoomStep: 0.16,
-        panModifier: 'shift',
         enableDoubleClickReset: true,
-        allowUnsafeHtml: true,
       });
     }
 

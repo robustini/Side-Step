@@ -1,12 +1,10 @@
 """
-FixedLoRAModule -- Variant-aware adapter training step for ACE-Step 1.5
+FixedLoRAModule -- adapter training step for ACE-Step 1.5
 
 This module contains the ``FixedLoRAModule`` (nn.Module) responsible for
-the per-step training logic.  The training strategy is auto-selected
-based on the model variant:
-
-- **Turbo**: discrete 8-step timestep sampling, no CFG dropout.
-- **Base / SFT**: continuous logit-normal timestep sampling + CFG dropout.
+the per-step training logic. Timestep sampling is controlled by
+``timestep_mode``: continuous (logit-normal, default for all variants)
+or discrete (8-step turbo schedule). CFG dropout is applied for all modes.
 
 Also includes small device/dtype/precision helpers used by both the
 Fabric and basic training loops.
@@ -127,18 +125,10 @@ class FixedLoRAModule(nn.Module):
     Supports both LoRA (PEFT) and LoKR (LyCORIS) adapters.  The training
     step is identical for both -- only the injection and weight format differ.
 
-    The timestep sampling strategy is auto-selected from ``is_turbo``:
+    Training uses the same flow-matching regime across variants:
 
-    **Turbo** (``is_turbo=True``):
         1. Load pre-computed tensors.
-        2. Sample noise ``x1`` and a discrete timestep ``t`` from the
-           turbo 8-step schedule (uniform over steps).
-        3. Interpolate ``x_t = t * x1 + (1 - t) * x0``.
-        4. Forward through decoder, compute flow matching loss.
-
-    **Base / SFT** (``is_turbo=False``):
-        1. Load pre-computed tensors.
-        2. Apply **CFG dropout** on ``encoder_hidden_states``.
+        2. Apply **CFG dropout** on ``encoder_hidden_states`` when enabled.
         3. Sample noise ``x1`` and continuous timestep ``t`` via
            ``sample_timesteps()`` (logit-normal).
         4. Interpolate ``x_t = t * x1 + (1 - t) * x0``.
@@ -195,10 +185,11 @@ class FixedLoRAModule(nn.Module):
                 "[WARN] model.null_condition_emb not found -- CFG dropout disabled"
             )
 
-        # -- Variant-aware training strategy -----------------------------------
+        # -- Training strategy -------------------------------------------------
         self._is_turbo: bool = getattr(training_config, "is_turbo", False)
+        self._timestep_mode: str = getattr(training_config, "timestep_mode", "continuous")
 
-        # Timestep sampling params (used by base/sft continuous sampling)
+        # Timestep sampling params (used for all variants)
         self._timestep_mu = training_config.timestep_mu
         self._timestep_sigma = training_config.timestep_sigma
         self._data_proportion = training_config.data_proportion
@@ -209,18 +200,17 @@ class FixedLoRAModule(nn.Module):
         # Adaptive timestep sampler (set by trainer when enabled, None = off)
         self._adaptive_sampler = None
 
-        if self._is_turbo:
-            logger.info(
-                "[OK] Turbo detected -- using discrete 8-step sampling, "
-                "CFG dropout disabled"
-            )
-        else:
-            logger.info(
-                "[OK] Base/SFT detected -- using continuous logit-normal "
-                "sampling + CFG dropout (ratio=%.2f), loss_weighting=%s",
-                self._cfg_ratio,
-                self._loss_weighting,
-            )
+        _variant_label = "Turbo" if self._is_turbo else "Base/SFT"
+        _mode_label = (
+            "continuous logit-normal" if self._timestep_mode == "continuous"
+            else "discrete 8-step"
+        )
+        logger.info(
+            "[OK] %s detected -- using %s sampling + CFG dropout "
+            "(ratio=%.2f), loss_weighting=%s",
+            _variant_label, _mode_label,
+            self._cfg_ratio, self._loss_weighting,
+        )
 
         # Rolling buffer of sampled timesteps (CPU tensors) for TensorBoard
         # histogram logging.  Capped so memory stays bounded even over
@@ -354,10 +344,12 @@ class FixedLoRAModule(nn.Module):
     # -----------------------------------------------------------------------
 
     def training_step(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        """Single training step with variant-aware timestep sampling.
+        """Single training step.
 
-        Turbo models use discrete 8-step sampling (no CFG dropout).
-        Base/SFT models use continuous logit-normal sampling + CFG dropout.
+        Timestep sampling follows ``timestep_mode``: continuous uses
+        logit-normal sampling, discrete uses the 8-step turbo schedule.
+        CFG dropout is applied whenever the model provides a null-condition
+        embedding and the configured ratio is greater than zero.
 
         Args:
             batch: Dict with keys ``target_latents``, ``attention_mask``,
@@ -384,42 +376,40 @@ class FixedLoRAModule(nn.Module):
 
             bsz = target_latents.shape[0]
 
-            if self._is_turbo:
-                # ---- Turbo: discrete 8-step, no CFG dropout ----------------
-                t, r = sample_discrete_timesteps(
+            # ---- Reference training path for all variants -----------------
+            if self._null_cond_emb is not None and self._cfg_ratio > 0.0:
+                encoder_hidden_states = apply_cfg_dropout(
+                    encoder_hidden_states,
+                    self._null_cond_emb,
+                    cfg_ratio=self._cfg_ratio,
+                )
+            if self._timestep_mode == "discrete":
+                t, _r = sample_discrete_timesteps(
                     batch_size=bsz,
                     device=self.device,
                     dtype=self.dtype,
                 )
+            elif self._adaptive_sampler is not None:
+                t, _r = self._adaptive_sampler.sample(
+                    batch_size=bsz,
+                    base_sampler=sample_timesteps,
+                    device=self.device,
+                    dtype=self.dtype,
+                    data_proportion=self._data_proportion,
+                    timestep_mu=self._timestep_mu,
+                    timestep_sigma=self._timestep_sigma,
+                    use_meanflow=False,
+                )
             else:
-                # ---- Base/SFT: CFG dropout + continuous sampling -----------
-                if self._null_cond_emb is not None and self._cfg_ratio > 0.0:
-                    encoder_hidden_states = apply_cfg_dropout(
-                        encoder_hidden_states,
-                        self._null_cond_emb,
-                        cfg_ratio=self._cfg_ratio,
-                    )
-                if self._adaptive_sampler is not None:
-                    t, r = self._adaptive_sampler.sample(
-                        batch_size=bsz,
-                        base_sampler=sample_timesteps,
-                        device=self.device,
-                        dtype=self.dtype,
-                        data_proportion=self._data_proportion,
-                        timestep_mu=self._timestep_mu,
-                        timestep_sigma=self._timestep_sigma,
-                        use_meanflow=False,
-                    )
-                else:
-                    t, r = sample_timesteps(
-                        batch_size=bsz,
-                        device=self.device,
-                        dtype=self.dtype,
-                        data_proportion=self._data_proportion,
-                        timestep_mu=self._timestep_mu,
-                        timestep_sigma=self._timestep_sigma,
-                        use_meanflow=False,
-                    )
+                t, _r = sample_timesteps(
+                    batch_size=bsz,
+                    device=self.device,
+                    dtype=self.dtype,
+                    data_proportion=self._data_proportion,
+                    timestep_mu=self._timestep_mu,
+                    timestep_sigma=self._timestep_sigma,
+                    use_meanflow=False,
+                )
 
             # Record sampled timesteps for TensorBoard histogram logging.
             self._timestep_buffer.append(t.detach().cpu())
@@ -464,7 +454,7 @@ class FixedLoRAModule(nn.Module):
                 diffusion_loss = F.mse_loss(decoder_outputs[0], flow)
 
             # Update adaptive sampler with per-sample losses (if enabled)
-            if self._adaptive_sampler is not None and not self._is_turbo:
+            if self._adaptive_sampler is not None:
                 with torch.no_grad():
                     if self._loss_weighting == "min_snr":
                         # Reuse already-computed per_sample_loss (raw MSE)

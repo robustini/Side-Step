@@ -47,11 +47,17 @@ const WorkspaceConfig = (() => {
       ["full-dataset-repeats", "rev-repeats", v => v + "\u00d7"],
       ["full-grad-ckpt-ratio", "rev-ckpt-mode", v => parseFloat(v) > 0 ? "ratio " + v : "off"],
       ["full-chunk-duration", "rev-chunk", v => v === "0" ? "off" : v + "s"],
+      ["full-max-latent-length", "rev-chunk", v => {
+        const mode = _v("full-crop-mode", "full");
+        if (mode === "latent") return v === "0" ? "off" : ("max_latent_length=" + v);
+        return _v("full-chunk-duration", "0") === "0" ? "off" : (_v("full-chunk-duration", "0") + "s");
+      }],
       ["full-optimizer", "rev-optimizer", v => v],
       ["full-scheduler", "rev-scheduler", v => v],
       ["full-weight-decay", "rev-weight-decay", v => v],
       ["full-max-grad-norm", "rev-grad-norm", v => v],
       ["full-save-every", "rev-save-every", v => v + " epochs"],
+      ["full-target-loss", "rev-target-loss", v => v === "0" ? "off" : v],
     ];
 
     fields.forEach(([srcId, targetId, fmt]) => {
@@ -71,6 +77,19 @@ const WorkspaceConfig = (() => {
       src.addEventListener("change", update);
       update();
     });
+
+    // Cross-dependency: rev-chunk reads full-crop-mode but only listens on
+    // full-max-latent-length / full-chunk-duration.  Re-fire both when the
+    // crop mode dropdown changes so the review row stays in sync.
+    const cropMode = $("full-crop-mode");
+    if (cropMode) {
+      cropMode.addEventListener("change", () => {
+        ["full-chunk-duration", "full-max-latent-length"].forEach(id => {
+          const el = $(id);
+          if (el) el.dispatchEvent(new Event("change"));
+        });
+      });
+    }
 
     const updateBatch = () => {
       const bs = parseInt($("full-batch")?.value) || 1;
@@ -411,17 +430,25 @@ const WorkspaceConfig = (() => {
       batch_size: _v("full-batch", "1"), grad_accum: _v("full-grad-accum", "4"),
       epochs: _v("full-epochs", "1000"), warmup_steps: _v("full-warmup", "100"), max_steps: _v("full-max-steps", "0"),
       shift: _v("full-shift", "3.0"), num_inference_steps: _v("full-inference-steps", "8"),
+      timestep_mode: _v("full-timestep-mode", "continuous"),
       cfg_ratio: _v("full-cfg-dropout", "0.15"), loss_weighting: _v("full-loss-weighting", "none"),
       snr_gamma: _v("full-snr-gamma", "5.0"), offload_encoder: _c("full-offload-encoder"),
       gradient_checkpointing: gradCkptEnabled,
       gradient_checkpointing_ratio: _v("full-grad-ckpt-ratio", "1.0"),
-      chunk_duration: _v("full-chunk-duration", "0"), chunk_decay_every: _v("full-chunk-decay-every", "10"),
+      crop_mode: _v("full-crop-mode", "full"),
+      chunk_duration: _v("full-chunk-duration", "0"),
+      max_latent_length: _v("full-max-latent-length", "0"),
+      chunk_decay_every: _v("full-chunk-decay-every", "10"),
       optimizer_type: _v("full-optimizer", "adamw8bit"), scheduler: _v("full-scheduler", "cosine"),
       scheduler_formula: _v("full-scheduler-formula", ""),
       device: _v("full-device", "auto"), precision: _v("full-precision", "auto"),
       save_every: _v("full-save-every", "50"), log_every: _v("full-log-every", "10"),
       log_heavy_every: _v("full-log-heavy-every", "50"), save_best: _c("full-save-best"),
       save_best_after: _v("full-save-best-after", "200"), early_stop: _v("full-early-stop", "0"),
+      target_loss: _v("full-target-loss", "0"),
+      target_loss_floor: _v("full-target-loss-floor", "0.01"),
+      target_loss_warmup: _v("full-target-loss-warmup", "50"),
+      target_loss_smoothing: _v("full-target-loss-smoothing", "0.98"),
       resume_from: _v("full-resume-from", ""), strict_resume: $("full-strict-resume")?.checked ?? true,
       weight_decay: _v("full-weight-decay", "0.01"),
       max_grad_norm: _v("full-max-grad-norm", "1.0"), seed: _v("full-seed", "42"),
@@ -445,6 +472,16 @@ const WorkspaceConfig = (() => {
       cfg.persistent_workers = false;
     } else if (cfg.prefetch_factor === "" || cfg.prefetch_factor == null) {
       cfg.prefetch_factor = "2";
+    }
+
+    if (cfg.crop_mode === "latent") {
+      cfg.chunk_duration = "0";
+      if (!cfg.max_latent_length || Number(cfg.max_latent_length) <= 0) cfg.max_latent_length = "1500";
+    } else if (cfg.crop_mode === "seconds") {
+      cfg.max_latent_length = "0";
+    } else {
+      cfg.chunk_duration = "0";
+      cfg.max_latent_length = "0";
     }
 
     const logDir = _v("full-log-dir", "");

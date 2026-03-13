@@ -223,19 +223,12 @@ class OFTConfigV2(OFTConfig):
 
 @dataclass
 class TrainingConfigV2(TrainingConfig):
-    """Extended training configuration with corrected-training fields.
+    """Extended training configuration for Side-Step.
 
-    New fields compared to the original TrainingConfig:
-    - CFG dropout (cfg_ratio)
-    - Continuous timestep sampling parameters (timestep_mu, timestep_sigma,
-      data_proportion)
-    - Model variant selection
-    - Device / precision auto-detection
-    - Estimation parameters
-    - Extended TensorBoard logging
-    - Sample generation during training
-    - Checkpoint resume
-    - Preprocessing flags
+    Covers adapter selection, model variant, training hyperparameters,
+    schedulers, cruise control, logging, checkpointing, estimation,
+    sample generation, and device/precision auto-detection.  See
+    per-field docstrings for details.
     """
 
     # --- Data loading (declared here for compatibility with base packages
@@ -310,15 +303,19 @@ class TrainingConfigV2(TrainingConfig):
     adapter_type: str = "lora"
     """Adapter type: 'lora', 'dora', 'lokr', 'loha', or 'oft'."""
 
+    timestep_mode: str = "continuous"
+    """Timestep sampling strategy: 'continuous' (logit-normal, recommended
+    for all variants) or 'discrete' (8-step turbo inference schedule).
+    Previously turbo always used discrete; as of v1.1.1 continuous is the
+    default for all variants."""
+
     # --- Model variant detection ---------------------------------------------
     is_turbo: bool = False
     """Auto-detected: ``True`` when the model is turbo or a turbo-based
-    fine-tune (``num_inference_steps == 8``).  Controls whether training
-    uses discrete 8-step sampling (turbo) or continuous logit-normal
-    sampling + CFG dropout (base/sft).  Not user-facing."""
+    fine-tune (``num_inference_steps == 8``)."""
 
     # --- Model / paths ------------------------------------------------------
-    model_variant: str = "turbo"
+    model_variant: str = "base"
     """Model variant: 'turbo', 'base', or 'sft'."""
 
     checkpoint_dir: str = "./checkpoints"
@@ -357,6 +354,22 @@ class TrainingConfigV2(TrainingConfig):
     early_stop_patience: int = 0
     """Stop training if smoothed loss doesn't improve for this many epochs
     after best-model tracking is active.  0 = disabled."""
+
+    target_loss: float = 0.0
+    """Target loss for cruise control.  When smoothed loss reaches this value,
+    LR is progressively damped to hold steady.  0 = disabled."""
+
+    target_loss_floor: float = 0.01
+    """Minimum LR multiplier when target loss cruise control is active.
+    0.01 = LR can drop to 1% of scheduled value at the target loss."""
+
+    target_loss_warmup: int = 50
+    """Minimum optimizer steps before cruise control can engage.
+    Avoids false activation on noisy early losses."""
+
+    target_loss_smoothing: float = 0.98
+    """EMA beta for smoothing the loss signal used by cruise control.
+    Higher = smoother (less reactive).  0.98 ≈ 50-step half-life."""
 
     # --- Extended TensorBoard logging ---------------------------------------
     log_dir: Optional[str] = None
@@ -415,6 +428,14 @@ class TrainingConfigV2(TrainingConfig):
     Values below 60 (e.g. 30) may reduce training quality for full-length
     inference."""
 
+    max_latent_length: Optional[int] = None
+    """Random latent crop length measured directly in latent frames.
+    When set to a positive value, this takes precedence over ``chunk_duration``."""
+
+    crop_mode: Optional[str] = None
+    """Optional UI-facing crop mode hint (``full``, ``seconds``, ``latent``).
+    Training logic uses ``max_latent_length`` / ``chunk_duration`` directly."""
+
     chunk_decay_every: int = 10
     """Epoch interval for halving the chunk coverage histogram.
     Controls how quickly previously-trained regions become eligible again.
@@ -449,7 +470,7 @@ class TrainingConfigV2(TrainingConfig):
     adaptive_timestep_ratio: float = 0.0
     """Fraction of timesteps from loss-weighted adaptive distribution.
     0.0 = pure logit-normal (default).  0.3 = 30% adaptive + 70% base.
-    Only applies to base/SFT continuous sampling; turbo is unaffected."""
+    Only applies when timestep_mode='continuous'; discrete mode bypasses this."""
 
     warmup_start_factor: float = 0.1
     """LR warmup ramps from ``base_lr * warmup_start_factor`` to ``base_lr``.
@@ -515,6 +536,32 @@ class TrainingConfigV2(TrainingConfig):
             errors.append(
                 f"cosine_restarts_count must be >= 1 "
                 f"(got {self.cosine_restarts_count})"
+            )
+        if self.target_loss < 0:
+            errors.append(f"target_loss must be >= 0 (got {self.target_loss})")
+        if not (0.0 < self.target_loss_floor <= 1.0):
+            errors.append(
+                f"target_loss_floor must be > 0 and <= 1 "
+                f"(got {self.target_loss_floor})"
+            )
+        if self.max_latent_length is not None and (
+            not isinstance(self.max_latent_length, int) or self.max_latent_length < 0
+        ):
+            errors.append(
+                f"max_latent_length must be None or a non-negative integer "
+                f"(got {self.max_latent_length!r})"
+            )
+        if self.crop_mode is not None and self.crop_mode not in ("full", "seconds", "latent"):
+            errors.append(
+                f"crop_mode must be None or one of 'full', 'seconds', 'latent' "
+                f"(got {self.crop_mode!r})"
+            )
+        if self.target_loss_warmup < 0:
+            errors.append(f"target_loss_warmup must be >= 0 (got {self.target_loss_warmup})")
+        if not (0.0 < self.target_loss_smoothing < 1.0):
+            errors.append(
+                f"target_loss_smoothing must be > 0 and < 1 "
+                f"(got {self.target_loss_smoothing})"
             )
         if errors:
             raise ValueError(
@@ -605,6 +652,10 @@ class TrainingConfigV2(TrainingConfig):
                 "save_best": self.save_best,
                 "save_best_after": self.save_best_after,
                 "early_stop_patience": self.early_stop_patience,
+                "target_loss": self.target_loss,
+                "target_loss_floor": self.target_loss_floor,
+                "target_loss_warmup": self.target_loss_warmup,
+                "target_loss_smoothing": self.target_loss_smoothing,
                 "log_dir": self.log_dir,
                 "log_every": self.log_every,
                 "log_heavy_every": self.log_heavy_every,
@@ -615,6 +666,8 @@ class TrainingConfigV2(TrainingConfig):
                 "max_duration": self.max_duration,
                 "normalize": self.normalize,
                 "chunk_duration": self.chunk_duration,
+                "max_latent_length": self.max_latent_length,
+                "crop_mode": self.crop_mode,
                 "chunk_decay_every": self.chunk_decay_every,
                 "dataset_repeats": self.dataset_repeats,
                 "max_steps": self.max_steps,

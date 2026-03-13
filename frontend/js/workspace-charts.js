@@ -80,29 +80,123 @@ const WorkspaceCharts = (() => {
     const smoothVal = $("chart-smoothing-val");
     if (smoothSlider) {
       smoothSlider.addEventListener("input", () => {
-        const w = parseInt(smoothSlider.value, 10) / 100;
+        const w = parseInt(smoothSlider.value, 10) / 1000;
         if (smoothVal) smoothVal.textContent = w.toFixed(2);
         if (typeof Training !== "undefined") Training.setSmoothing(w);
       });
     }
 
+    // Snap-to-grid toggle (S button + keyboard shortcut)
+    const snapBtn = $("btn-snap-grid");
+    function _toggleSnap() {
+      if (typeof Training === "undefined") return;
+      const next = !Training.getSnap();
+      Training.setSnap(next);
+      if (snapBtn) {
+        snapBtn.classList.toggle("active", next);
+        _setPressed(snapBtn, next);
+      }
+    }
+    if (snapBtn) {
+      snapBtn.addEventListener("click", _toggleSnap);
+    }
+    document.addEventListener("keydown", (e) => {
+      if (e.target.closest("input,textarea,select,[contenteditable]")) return;
+      if (e.key === 's' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        _toggleSnap();
+      }
+      if (e.key === 'Escape' && typeof Training !== "undefined") {
+        Training.collapseExpanded();
+      }
+    });
+
+    // Close expanded chart button
+    $("btn-close-expanded")?.addEventListener("click", () => {
+      if (typeof Training !== "undefined") Training.collapseExpanded();
+    });
+
     // Delegate to shared ChartInteraction utility (Training loaded later, callbacks are lazy)
     if (typeof ChartInteraction !== "undefined") {
       const T = () => typeof Training !== "undefined" ? Training : null;
+
+      // Helper: linearly interpolate between two values
+      function _lerp(arr, fractionalIdx) {
+        if (!arr || arr.length === 0) return null;
+        const lo = Math.floor(fractionalIdx);
+        const hi = Math.ceil(fractionalIdx);
+        if (lo < 0 || hi >= arr.length) return arr[Math.max(0, Math.min(arr.length - 1, Math.round(fractionalIdx)))];
+        if (lo === hi) return arr[lo];
+        const t = fractionalIdx - lo;
+        return arr[lo] * (1 - t) + arr[hi] * t;
+      }
+
       ChartInteraction.wire({
-        areaId: "monitor-chart-area", svgId: "monitor-loss-svg",
+        areaId: "monitor-series-area", svgId: "monitor-loss-svg",
         getView: () => T()?.getChartView() || { startIdx: 0, endIdx: 1, totalLen: 1 },
+        getSnap: () => T()?.getSnap() ?? true,
         setRange: (lo, hi) => T()?.setViewRange(lo, hi),
         zoomReset: () => T()?.zoomReset(),
         minRange: 2,
         zoomStep: 0.16,
-        panModifier: "shift",
         enableDoubleClickReset: true,
-        allowUnsafeHtml: true,
         formatTip: (idx) => {
-          const mode = T()?.getChartMode?.() || "epoch";
-          const label = mode === "step" ? "step" : "epoch";
-          return '<span class="u-text-muted">' + label + ' #' + idx + '</span>';
+          const t = T();
+          const mode = t?.getChartMode?.() || "epoch";
+          const label = mode === "step" ? "Step" : "Epoch";
+          const intIdx = Math.round(idx);
+          const data = t?.getDataAtIndex?.(intIdx);
+          if (!data) return '<table><tr><th colspan="3">' + label + ' ' + intIdx.toLocaleString() + '</th></tr></table>';
+          const rows = [];
+          rows.push('<tr><th colspan="3">' + label + ' ' + intIdx.toLocaleString() + '</th></tr>');
+          if (data.smoothed != null) {
+            rows.push('<tr><td><span class="chart-tooltip__swatch" style="background:var(--primary)"></span></td><td>Loss</td><td>' + data.smoothed.toFixed(4) + '</td></tr>');
+          }
+          if (data.raw != null) {
+            rows.push('<tr><td><span class="chart-tooltip__swatch" style="background:var(--primary);opacity:0.3"></span></td><td>Raw</td><td>' + data.raw.toFixed(4) + '</td></tr>');
+          }
+          if (data.ma5 != null) {
+            rows.push('<tr><td><span class="chart-tooltip__swatch" style="background:var(--changed)"></span></td><td>MA5</td><td>' + data.ma5.toFixed(4) + '</td></tr>');
+          }
+          if (data.lr != null) {
+            rows.push('<tr><td><span class="chart-tooltip__swatch" style="background:var(--secondary)"></span></td><td>LR</td><td>' + data.lr.toExponential(2) + '</td></tr>');
+          }
+          return '<table>' + rows.join('') + '</table>';
+        },
+        onHover: (idx) => {
+          const t = T();
+          const chartOpts = t?.getChartOpts?.();
+          if (!chartOpts || typeof TrainingChart === "undefined") return;
+          const intIdx = Math.round(idx);
+          const coords = TrainingChart.getPointCoords(intIdx, chartOpts);
+          const dotsG = $("monitor-hover-dots");
+          if (!coords || !dotsG) { if (dotsG) dotsG.style.display = "none"; return; }
+          dotsG.style.display = "";
+          // In free mode, interpolate X position for smooth cursor following
+          let x = coords.x;
+          if (idx !== intIdx) {
+            const { fullLoss, viewXMin, viewXMax } = chartOpts;
+            const totalLen = fullLoss.length;
+            const startIdx = viewXMin ?? 0, endIdx = viewXMax ?? totalLen;
+            const visLen = endIdx - startIdx;
+            const localFrac = (idx - startIdx) / Math.max(1, visLen - 1);
+            x = localFrac * 1000; // vbW = 1000
+          }
+          // Convert viewBox coords (1000×500) to percentage for HTML overlay
+          const vbW = 1000, vbH = 500;
+          const xPct = (x / vbW * 100).toFixed(2) + "%";
+          function _placeDot(el, yVb) {
+            if (!el) return;
+            el.style.left = xPct;
+            el.style.top = (yVb / vbH * 100).toFixed(2) + "%";
+          }
+          _placeDot($("dot-smooth"), coords.smoothY);
+          _placeDot($("dot-raw"), coords.lossY);
+          _placeDot($("dot-ma5"), coords.ma5Y);
+          _placeDot($("dot-lr"), coords.lrY);
+        },
+        onLeave: () => {
+          const dotsG = $("monitor-hover-dots");
+          if (dotsG) dotsG.style.display = "none";
         },
       });
     }

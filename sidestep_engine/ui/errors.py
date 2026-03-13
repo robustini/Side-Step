@@ -29,7 +29,7 @@ _SUGGESTIONS: dict[str, list[str]] = {
     # Model loading
     "No such file or directory": [
         "Check --checkpoint-dir points to the correct path",
-        "Verify the model variant directory exists (e.g. acestep-v15-turbo/)",
+        "Verify the model variant directory exists (e.g. acestep-v15-base/)",
     ],
     "not found": [
         "Check that all required paths exist",

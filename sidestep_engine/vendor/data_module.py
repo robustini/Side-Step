@@ -97,6 +97,7 @@ class PreprocessedTensorDataset(Dataset):
         self,
         tensor_dir: str,
         chunk_duration: Optional[int] = None,
+        max_latent_length: Optional[int] = None,
         chunk_decay_every: int = 10,
         dataset_repeats: int = 1,
         verify_checksums: bool = False,
@@ -111,6 +112,8 @@ class PreprocessedTensorDataset(Dataset):
                 ``60``  = recommended default.
                 Values below 60 (e.g. 30) may reduce training quality for
                 full-length inference -- use with caution.
+            max_latent_length: Optional random crop length measured in
+                latent frames. Takes precedence over ``chunk_duration``.
             chunk_decay_every: Epoch interval for halving the coverage
                 histogram.  ``0`` disables decay.  Default ``10``.
             dataset_repeats: Global repetition multiplier.  Each sample
@@ -124,6 +127,7 @@ class PreprocessedTensorDataset(Dataset):
         """
         self.tensor_dir = tensor_dir
         self.chunk_duration = chunk_duration
+        self.max_latent_length = max_latent_length
         self._chunk_decay_every = chunk_decay_every
         self.sample_paths = []
         self.manifest_path = str(Path(tensor_dir) / "manifest.json")
@@ -204,19 +208,21 @@ class PreprocessedTensorDataset(Dataset):
 
         # Auto-detect latent FPS from first sample when chunking is enabled
         self._latent_fps: float = self._LATENT_FPS_FALLBACK
-        if self.chunk_duration is not None and self.valid_paths:
+        if (self.chunk_duration is not None or self.max_latent_length is not None) and self.valid_paths:
             self._latent_fps = self._detect_latent_fps()
 
         # Coverage-weighted chunk sampler (replaces uniform random)
         self._chunk_sampler = None
-        if self.chunk_duration is not None:
+        if self.chunk_duration is not None or self.max_latent_length is not None:
             from sidestep_engine.data.chunk_sampler import CoverageChunkSampler
             self._chunk_sampler = CoverageChunkSampler(
                 n_bins=32, decay_every=self._chunk_decay_every,
             )
 
         chunk_info = ""
-        if self.chunk_duration is not None:
+        if self.max_latent_length is not None:
+            chunk_info = f", max_latent_length={int(self.max_latent_length)} frames"
+        elif self.chunk_duration is not None:
             chunk_frames = int(self.chunk_duration * self._latent_fps)
             chunk_info = f", chunk={self.chunk_duration}s (~{chunk_frames} frames)"
         repeat_info = ""
@@ -320,18 +326,23 @@ class PreprocessedTensorDataset(Dataset):
                 )
                 _tens.nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0)
 
-        # Coverage-weighted chunking: slice a window biased toward unseen regions
-        if self.chunk_duration is not None:
+        # Coverage-weighted cropping: latent-length crop takes precedence over seconds
+        crop_frames = None
+        if self.max_latent_length is not None:
+            crop_frames = int(self.max_latent_length)
+        elif self.chunk_duration is not None:
+            crop_frames = int(self.chunk_duration * self._latent_fps)
+
+        if crop_frames is not None:
             T = target_latents.shape[0]
-            chunk_frames = int(self.chunk_duration * self._latent_fps)
-            if chunk_frames > 0 and T > chunk_frames:
+            if crop_frames > 0 and T > crop_frames:
                 if self._chunk_sampler is not None:
                     start = self._chunk_sampler.sample_offset(
-                        tensor_path, T, chunk_frames,
+                        tensor_path, T, crop_frames,
                     )
                 else:
-                    start = torch.randint(0, T - chunk_frames, (1,)).item()
-                end = start + chunk_frames
+                    start = torch.randint(0, T - crop_frames, (1,)).item()
+                end = start + crop_frames
                 target_latents = target_latents[start:end]
                 attention_mask = attention_mask[start:end]
                 context_latents = context_latents[start:end]
@@ -426,6 +437,7 @@ class PreprocessedDataModule(LightningDataModule if LIGHTNING_AVAILABLE else obj
         pin_memory_device: str = "",
         val_split: float = 0.0,
         chunk_duration: Optional[int] = None,
+        max_latent_length: Optional[int] = None,
         chunk_decay_every: int = 10,
         dataset_repeats: int = 1,
     ):
@@ -438,6 +450,7 @@ class PreprocessedDataModule(LightningDataModule if LIGHTNING_AVAILABLE else obj
             pin_memory: Whether to pin memory for faster GPU transfer
             val_split: Fraction of data for validation (0 = no validation)
             chunk_duration: Random chunk length in seconds (None = disabled)
+            max_latent_length: Random crop length in latent frames (None = disabled)
             chunk_decay_every: Epoch interval for coverage histogram decay.
             dataset_repeats: Global dataset repetition multiplier (1 = none).
         """
@@ -453,6 +466,7 @@ class PreprocessedDataModule(LightningDataModule if LIGHTNING_AVAILABLE else obj
         self.pin_memory_device = pin_memory_device
         self.val_split = val_split
         self.chunk_duration = chunk_duration
+        self.max_latent_length = max_latent_length
         self.chunk_decay_every = chunk_decay_every
         self.dataset_repeats = dataset_repeats
 
@@ -465,6 +479,7 @@ class PreprocessedDataModule(LightningDataModule if LIGHTNING_AVAILABLE else obj
             full_dataset = PreprocessedTensorDataset(
                 self.tensor_dir,
                 chunk_duration=self.chunk_duration,
+                max_latent_length=self.max_latent_length,
                 chunk_decay_every=self.chunk_decay_every,
                 dataset_repeats=self.dataset_repeats,
             )

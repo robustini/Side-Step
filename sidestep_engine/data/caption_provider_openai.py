@@ -16,11 +16,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 from sidestep_engine.data.caption_config import (
-    DEFAULT_MAX_TOKENS,
     DEFAULT_OPENAI_MODEL,
-    DEFAULT_TEMPERATURE,
     build_user_prompt,
     get_system_prompt,
+    resolve_generation_settings,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,6 +29,19 @@ _RETRY_BACKOFF_BASE = 2.0
 _MAX_AUDIO_SIZE_MB = 20
 _AUDIO_FMT_MAP = {"mp3": "mp3", "wav": "wav", "flac": "flac",
                    "ogg": "ogg", "m4a": "m4a"}
+
+
+def _is_encoding_error(exc: Exception) -> bool:
+    """Return True if *exc* (or its cause chain) is a Unicode encoding error."""
+    cur: BaseException | None = exc
+    for _ in range(6):
+        if cur is None:
+            break
+        if isinstance(cur, (UnicodeEncodeError, UnicodeDecodeError)):
+            return True
+        cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+    msg = str(exc).lower()
+    return "codec can't encode" in msg or "codec can't decode" in msg
 
 
 def _get_openai() -> Any:
@@ -67,6 +79,11 @@ def generate_caption(
     lyrics_excerpt: str = "",
     model: str = DEFAULT_OPENAI_MODEL,
     base_url: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    top_p: Optional[float] = None,
+    presence_penalty: Optional[float] = None,
+    frequency_penalty: Optional[float] = None,
     max_retries: int = _MAX_RETRIES,
 ) -> Optional[str]:
     """Generate a caption using an OpenAI-compatible API.
@@ -85,22 +102,39 @@ def generate_caption(
     if base_url:
         client_kwargs["base_url"] = base_url
     client = openai.OpenAI(**client_kwargs)
+    generation = resolve_generation_settings(
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+    )
 
-    user_prompt = build_user_prompt(title, artist, lyrics_excerpt)
+    # Convert lossless audio to MP3 before encoding to save bandwidth
+    from sidestep_engine.data.audio_convert import ensure_mp3, cleanup_temp
 
-    # Build user content (text-only or multimodal)
+    upload_path: Optional[Path] = None
+    upload_is_temp = False
     audio_part = None
     if audio_path and audio_path.is_file():
-        audio_part = _build_audio_part(audio_path)
+        upload_path, upload_is_temp = ensure_mp3(audio_path)
+        audio_part = _build_audio_part(upload_path)
+        cleanup_temp(upload_path, upload_is_temp)
+    user_prompt = build_user_prompt(
+        title,
+        artist,
+        lyrics_excerpt,
+        audio_attached=audio_part is not None,
+    )
     if audio_part:
         user_content: Any = [{"type": "text", "text": user_prompt}, audio_part]
     else:
         user_content = user_prompt
 
-    messages = [
-        {"role": "system", "content": get_system_prompt()},
-        {"role": "user", "content": user_content},
-    ]
+    messages = [{"role": "user", "content": user_content}]
+    system_prompt = get_system_prompt("openai")
+    if system_prompt:
+        messages.insert(0, {"role": "system", "content": system_prompt})
 
     for attempt in range(max_retries):
         try:
@@ -110,8 +144,11 @@ def generate_caption(
             try:
                 response = client.chat.completions.create(
                     model=model, messages=messages,
-                    max_completion_tokens=DEFAULT_MAX_TOKENS,
-                    temperature=DEFAULT_TEMPERATURE,
+                    max_completion_tokens=int(generation["max_tokens"]),
+                    temperature=float(generation["temperature"]),
+                    top_p=float(generation["top_p"]),
+                    presence_penalty=float(generation["presence_penalty"]),
+                    frequency_penalty=float(generation["frequency_penalty"]),
                 )
             except (TypeError, Exception) as _mct_err:
                 # TypeError: older openai SDK doesn't know the param
@@ -119,8 +156,11 @@ def generate_caption(
                 if "max_completion_tokens" in str(_mct_err) or isinstance(_mct_err, TypeError):
                     response = client.chat.completions.create(
                         model=model, messages=messages,
-                        max_tokens=DEFAULT_MAX_TOKENS,
-                        temperature=DEFAULT_TEMPERATURE,
+                        max_tokens=int(generation["max_tokens"]),
+                        temperature=float(generation["temperature"]),
+                        top_p=float(generation["top_p"]),
+                        presence_penalty=float(generation["presence_penalty"]),
+                        frequency_penalty=float(generation["frequency_penalty"]),
                     )
                 else:
                     raise
@@ -147,7 +187,21 @@ def generate_caption(
             else:
                 logger.warning("OpenAI returned empty for: %s - %s", artist, title)
             return None
+        except (UnicodeEncodeError, UnicodeDecodeError) as exc:
+            logger.error(
+                "OpenAI encoding error (non-retryable): %s  "
+                "title=%r  artist=%r",
+                exc, title, artist,
+            )
+            return None
         except Exception as exc:
+            if _is_encoding_error(exc):
+                logger.error(
+                    "OpenAI encoding error (non-retryable, wrapped): %s  "
+                    "title=%r  artist=%r",
+                    exc, title, artist,
+                )
+                return None
             wait = _RETRY_BACKOFF_BASE ** attempt
             logger.warning("OpenAI error (attempt %d/%d): %s — retrying in %.1fs",
                            attempt + 1, max_retries, exc, wait)

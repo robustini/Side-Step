@@ -93,8 +93,9 @@
 .workspace {
   position: relative;
   display: grid;
-  grid-template-rows: auto 1fr auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   height: 100vh;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -352,9 +353,11 @@
    Main Content Area
    ============================================================ */
 .main {
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding: var(--space-lg);
+  padding-bottom: calc(var(--space-lg) + 48px);
 }
 
 /* Mode panels — only active one is visible */
@@ -463,6 +466,7 @@
   cursor: pointer;
   user-select: none;
   min-height: 32px;
+  flex-shrink: 0;
   transition: max-height 0.2s ease;
   overflow: hidden;
 }

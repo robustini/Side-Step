@@ -1,27 +1,28 @@
 # Side-Step for ACE-Step 1.5
 
 ```
- ███████╗██╗██████╗ ███████╗    ███████╗████████╗███████╗██████╗ 
- ██╔════╝██║██╔══██╗██╔════╝    ██╔════╝╚══██╔══╝██╔════╝██╔══██╗
- ███████╗██║██║  ██║█████╗█████╗███████╗   ██║   █████╗  ██████╔╝
- ╚════██║██║██║  ██║██╔══╝╚════╝╚════██║   ██║   ██╔══╝  ██╔═══╝ 
- ███████║██║██████╔╝███████╗    ███████║   ██║   ███████╗██║     
- ╚══════╝╚═╝╚═════╝ ╚══════╝    ╚══════╝   ╚═╝   ╚══════╝╚═╝     
+ ░▒▓███████▓▒░▒▓█▓▒░▒▓███████▓▒░░▒▓████████▓▒░░▒▓███████▓▒░▒▓████████▓▒░▒▓████████▓▒░▒▓███████▓▒░ 
+░▒▓█▓▒░      ░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░         ░▒▓█▓▒░   ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░      ░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░         ░▒▓█▓▒░   ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░
+ ░▒▓██████▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓██████▓▒░  ░▒▓██████▓▒░   ░▒▓█▓▒░   ░▒▓██████▓▒░ ░▒▓███████▓▒░ 
+       ░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░             ░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░      ░▒▓█▓▒░       
+       ░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░             ░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░      ░▒▓█▓▒░       
+░▒▓███████▓▒░░▒▓█▓▒░▒▓███████▓▒░░▒▓████████▓▒░▒▓███████▓▒░   ░▒▓█▓▒░   ░▒▓████████▓▒░▒▓█▓▒░       
  by dernet -- BETA
 ```
 
 **Standalone training toolkit for ACE-Step 1.5 audio generation models.**
 Takes you from raw audio files to a working adapter without the friction. Variant-aware multi-adapter fine-tuning (LoRA, DoRA, LoKR, LoHA, OFT) with auto-detection, low-VRAM support, and three ways to work.
 
-> **Status:** v1.0.1-beta -- Stable enough for daily use. Some features are still experimental. This is beta software being maintained by one person only; if you encounter an issue, please let me know in the issues tab.
+> **Status:** v1.1.2-beta -- Stable enough for daily use. Some features are still experimental. This is maintained by one person only; if you encounter an issue, please let me know in the issues tab.
 
 ## Why Side-Step?
 
-Side-Step auto-detects your model variant (turbo, base, or sft), selects the scientifically correct training schedule, and runs on consumer hardware down to 8 GB VRAM. Version 1.0.0 evolves it from a training script into a complete standalone software suite.
+Side-Step auto-detects your model variant (base, sft, or turbo), selects the scientifically correct training schedule, and runs on consumer hardware down to 8 GB VRAM. Version 1.1.2 adds user-selectable timestep sampling (continuous or discrete) across all three interfaces, building on 1.1.1's Music Flamingo/Transcriber Server providers, batched caption jobs, TensorBoard-parity charts, and training pipeline improvements.
 
 ### What was already here
 
-- **Auto-Configured Training** -- Turbo gets discrete 8-step sampling. Base/SFT gets continuous logit-normal + CFG dropout. The upstream trainer forces the Turbo schedule on all models; Side-Step fixes this automatically.
+- **Auto-Configured Training** -- All variants default to continuous logit-normal sampling + CFG dropout. Optionally switch to discrete 8-step sampling via `--timestep-mode discrete` (CLI), the Wizard, or the GUI dropdown. The upstream trainer forces the Turbo schedule on all models; Side-Step fixes this automatically.
 - **LoRA + LoKR Adapters** -- Standard and Kronecker-product low-rank fine-tuning.
 - **Preprocessing++ (PP++)** -- Fisher Information analysis assigns adaptive per-module ranks based on how important each layer is to *your specific audio*. Writes a `fisher_map.json` that training auto-detects.
 - **Two-Pass Preprocessing** -- Converts raw audio to training tensors in two low-memory passes (~3 GB then ~6 GB).
@@ -43,6 +44,36 @@ Side-Step auto-detects your model variant (turbo, base, or sft), selects the sci
 - **Run History** -- Persistent log of past training runs with best loss, adapter path, and hyperparameters.
 - **Tag Management** -- Bulk add/remove trigger tags and convert legacy sidecar formats.
 - **Cross-Platform Entry Point** -- `sidestep` (or `uv run sidestep` if not on PATH) works on all platforms.
+
+### New in 1.1.0
+
+- **Cruise Control (Target Loss)** -- Set a target loss value and Side-Step automatically damps the learning rate as training approaches it, holding the model at a sweet spot instead of over-fitting past it. EMA-smoothed loss signal, configurable warmup and floor. Works with all schedulers (conflict guards for Prodigy and cosine restarts). Resumes cleanly from checkpoints.
+- **Caption System Overhaul** -- Richer song-focused prompts that emphasize audible content over generic descriptions. Configurable generation parameters (temperature, top_p, penalties). Structured response parsing extracts genre, BPM, key, and time signature alongside the caption. Google Search grounding for Gemini. Lossless audio auto-converted to MP3 before upload to save bandwidth.
+- **Local Captioner Rewrite** -- Qwen2.5-Omni local captioner rebuilt with tiered VRAM configs, OOM recovery (retries with reduced token count), CPU offload option, audio transcoding fallback, cancellation support, and timing logs.
+- **Default Model Variant: Base** -- Base is now the recommended default everywhere (CLI, GUI, wizard, TUI, presets). Turbo remains available but is no longer the automatic first choice. Model variant dropdown auto-selects base > sft > turbo based on what's available in your checkpoint directory.
+- **Preset Revamp** -- All 7 built-in presets fleshed out with complete field coverage (adapter type, cruise control, checkpointing ratio, etc.). Presets now display adapter type, rank, LR, and epochs in the selection card. Type coercion fixes presets saved with numbers as strings.
+- **Encoding Error Resilience** -- Genius, Gemini, and OpenAI providers now detect encoding errors (including errors wrapped by SDK exception types) and bail immediately instead of retrying 3× on deterministic failures. Saves ~70 seconds per batch when processing songs with non-ASCII titles.
+- **Linux Desktop Integration** -- `.desktop` file and icon installed to XDG standard locations by the Linux installer. Side-Step appears in your application menu with its own icon.
+- **Electron Hardening** -- Navigation guard prevents blank-page crashes, renderer crash detection, DevTools shortcut (F12), native desktop notifications for training completion.
+- **Prompt Helpers Fix** -- `ask()` now correctly casts default values through `type_fn`, fixing numeric wizard defaults that were silently returned as strings.
+
+### New in 1.1.1
+
+- **Tensorboard-Like Monitor** -- Revamped Monitor tab to include more relevant information and better data representation, paired with Tensorboard style and Side-Step's design language.
+- **Music Flamingo Provider** -- Use Music Flamingo as a metadata and/or lyrics provider. Supports local servers via configurable URL and remote Hugging Face endpoints with token authentication.
+- **Transcriber Server Provider** -- Dedicated lyrics provider backed by a configurable Transcriber Server URL. Nested response parsing, multipart transport, and automatic fallback handling.
+- **Batched Caption Jobs** -- The GUI now runs caption generation as batched jobs. Multiple audio files are queued and processed in sequence with per-file progress, automatic retries, and cancellation support. No more one-at-a-time blocking. (Technically there since 1.0 but updated the readme to reflect the changes)
+- **Overwrite-Lyrics-Only Mode** -- Update only the lyrics field in existing sidecars without touching the rest of the metadata. Useful when re-running lyrics with a different provider.
+- **Explicit Sequence Crop Controls** -- Choose between full sample, chunk by seconds, or max latent length. Backend, presets, UI, and VRAM estimation all support the new modes.
+- **Turbo Training Overhaul** -- Replaced the old discrete 8-step Turbo schedule with continuous logit-normal timestep sampling and re-enabled CFG dropout. Turbo LoRA training now follows a proper training-oriented distribution.
+- **Cruise Control Progress** -- Target loss scale and EMA are now reported in the progress file, visible in the GUI monitor.
+- **TensorBoard-Parity Charts** -- The GUI training monitor now matches TensorBoard's smoothing algorithm, y-domain (P5-P95 with nice boundaries), grid counts, scroll zoom, pan, and closest-point finding. No external TensorBoard needed.
+- **CLI / Wizard / GUI Parity** -- All new features (crop modes, provider selection, endpoint URLs, HF token) are available across all three interfaces.
+- **Bug Fixes** -- `dtype` → `torch_dtype` in all `from_pretrained` calls (models were loading in default precision), LR restore on gradient flush path, caption regex truncation on apostrophes, faster TensorBoard flush (5s vs 30s), and several provider integration fixes.
+
+### New in 1.1.2
+
+- **Selectable Timestep Sampling** -- Choose between continuous (logit-normal, recommended) and discrete (8-step turbo inference schedule) timestep sampling. Available in the GUI as a dropdown, in the Wizard under "All the Levers", and via `--timestep-mode` in the CLI. Default is continuous for all model variants. Discrete mode is the legacy turbo behavior for users who want to train at exactly the 8 inference timesteps.
 
 ---
 
@@ -81,7 +112,7 @@ Automate pipelines or bypass menus entirely. Every argument has a `(default: X)`
 ```bash
 uv run sidestep train \
     --checkpoint-dir ./checkpoints \
-    --model-variant turbo \
+    --model base \
     --dataset-dir ./my_tensors \
     --output-dir ./output/my_lora \
     --adapter-type dora \
@@ -154,7 +185,7 @@ Train an adapter on preprocessed tensors. Side-Step detects your variant and app
 ```bash
 uv run sidestep train \
     --checkpoint-dir ./checkpoints \
-    --model-variant turbo \
+    --model base \
     --dataset-dir ./my_tensors \
     --output-dir ./output/my_lora \
     --epochs 500
@@ -167,7 +198,7 @@ Find which layers matter most for your data, then allocate rank accordingly.
 ```bash
 uv run sidestep analyze \
     --checkpoint-dir ./checkpoints \
-    --model-variant turbo \
+    --model base \
     --dataset-dir ./my_tensors
 ```
 
@@ -181,6 +212,14 @@ Generate rich sidecar metadata for your audio files.
 uv run sidestep captions \
     --audio-dir ./my_songs \
     --provider local_16gb       # or gemini, openai, lyrics_only
+
+# With Music Flamingo metadata + Transcriber Server lyrics:
+uv run sidestep captions \
+    --audio-dir ./my_songs \
+    --metadata-provider music_flamingo \
+    --lyrics-provider transcriber_server \
+    --music-flamingo-url http://localhost:5000 \
+    --transcriber-server-url http://localhost:8000
 ```
 
 ### Export to ComfyUI
@@ -224,10 +263,10 @@ Run `uv run sidestep --help` for full details.
 
 Side-Step ensures your fine-tuning matches the base model's original training distribution:
 
-1. **Turbo models** -- Discrete 8-step sampling (matching inference).
-2. **Base/SFT models** -- Continuous logit-normal sampling + CFG dropout (matching training).
+1. **Continuous mode** (default) -- Logit-normal sampling + CFG dropout. Recommended for all variants. Samples from a smooth distribution centered around the model's training regime.
+2. **Discrete mode** -- 8-step turbo inference schedule (shift=3.0). Legacy behavior for turbo models — trains at exactly the timestep values used during 8-step inference.
 
-The upstream trainer often forces the Turbo schedule on all models, which is incorrect for Base/SFT. Side-Step detects and fixes this automatically.
+Select via `--timestep-mode continuous|discrete` (CLI), the "Timestep sampling" dropdown (GUI), or the Wizard. The upstream trainer often forces the Turbo schedule on all models, which is incorrect for Base/SFT. Side-Step defaults to continuous for all variants and lets you override when needed.
 
 ---
 
@@ -255,4 +294,9 @@ See `sidestep_documentation/` for detailed guides:
 
 Contributions are always welcome. The inherent novelty of Audio Transformer-Based Diffusion makes these scripts fresh, and your contributions help every one of us. Open an issue, send a PR, or just share your results.
 
-Massive shoutout to [Signorlimone](https://github.com/Signorlimone) for designing and compositing the Side-Step logo.
+---
+## Contrubutors
+
+- Massive shoutout to [@Signorlimone](https://github.com/Signorlimone) for designing and compositing the Side-Step logo.
+
+- Amazing work done by [@robustini](https://github.com/robustini) in the training pipeline and lovely optimizations

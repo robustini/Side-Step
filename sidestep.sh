@@ -38,7 +38,7 @@ fi
 CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 echo ""
 echo -e "  ${CYAN}░▒▓ S I D E · S T E P ▓▒░${NC}"
-echo -e "  ${GREEN}v1.0.1${NC}"
+echo -e "  ${GREEN}v1.1.0-beta${NC}"
 echo ""
 echo -e "  ${YELLOW}[1]${NC}  Wizard   — Interactive CLI training wizard"
 echo -e "  ${YELLOW}[2]${NC}  GUI      — Launch web GUI in browser"

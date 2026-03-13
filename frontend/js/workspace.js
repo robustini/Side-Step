@@ -28,8 +28,19 @@ function switchMode(mode) {
 
 }
 
+function startGlobalGPUFeed() {
+  if (typeof API === "undefined" || typeof API.connectGpuWS !== "function") return;
+  if (_workspaceGpuWs) return;
+  _workspaceGpuWs = API.connectGpuWS((data) => {
+    if (data && typeof data === "object" && typeof AppState !== "undefined") {
+      AppState.setGPU(data);
+    }
+  });
+}
+
 /* ---- Toast notifications ---- */
 const _recentToasts = [];
+let _workspaceGpuWs = null;
 function showToast(message, kind) {
   const container = document.getElementById("toast-container");
   if (!container) return;
@@ -299,6 +310,8 @@ document.addEventListener("keydown", (e) => {
     document.addEventListener("click", (e) => {
       const icon = e.target.closest(".help-icon");
       if (!icon) return;
+      e.preventDefault();
+      e.stopPropagation();
       const helpId = icon.dataset.help;
       if (!helpId) return;
       const panel = document.getElementById(helpId);
@@ -637,6 +650,7 @@ document.addEventListener("keydown", (e) => {
        "btn-start-preprocess", "btn-run-ppplus", "btn-run-captions"].forEach(id => guardDoubleClick(id, 3000));
 
       initGPU();
+      startGlobalGPUFeed();
 
       setInterval(() => {
         const monitorPanel = document.getElementById("mode-monitor");
@@ -752,6 +766,9 @@ document.addEventListener("keydown", (e) => {
     openai_api_key:           "settings-openai-key",
     openai_base_url:          "settings-openai-base",
     genius_api_token:         "settings-genius-token",
+    transcriber_server_url:    "settings-transcriber-server-url",
+    music_flamingo_url:        "settings-music-flamingo-url",
+    hf_token:                  "settings-hf-token",
   };
 
   function _settingsDomId(key) {
@@ -770,6 +787,82 @@ document.addEventListener("keydown", (e) => {
       splash.classList.add('done');
       setTimeout(() => { splash.remove(); }, 700);
     }
+  }
+
+  function _reportRuntimeIssue(kind, detail) {
+    const msg = `[${String(kind || 'runtime')}] ${String(detail || '')}`;
+    const bridge = window.sidestepElectron || window.pywebview?.api;
+    if (bridge?.onBootError) {
+      try {
+        bridge.onBootError(msg);
+      } catch (_) {}
+    }
+  }
+
+  function _captureUiState(tag) {
+    const activeMode = document.querySelector('.mode-panel.active')?.id || 'none';
+    const activeLab = document.querySelector('.lab-panel.active')?.id || 'none';
+    const main = document.querySelector('.main');
+    const scrollTop = main ? Math.round(main.scrollTop || 0) : -1;
+    const scrollHeight = main ? Math.round(main.scrollHeight || 0) : -1;
+    const clientHeight = main ? Math.round(main.clientHeight || 0) : -1;
+    const url = `${location.pathname}${location.search}${location.hash}`;
+    return `${tag} mode=${activeMode} lab=${activeLab} scroll=${scrollTop}/${scrollHeight}/${clientHeight} url=${url}`;
+  }
+
+  let _runtimeHooksInstalled = false;
+  function _installRuntimeHooks() {
+    if (_runtimeHooksInstalled) return;
+    _runtimeHooksInstalled = true;
+
+    window.addEventListener('error', (e) => {
+      const detail = e.error?.stack || e.message || String(e.error || 'unknown error');
+      console.error('[runtime] window error:', e.error || e.message);
+      _reportRuntimeIssue('window-error', detail);
+    }, true);
+
+    window.addEventListener('unhandledrejection', (e) => {
+      const detail = e.reason?.stack || e.reason?.message || String(e.reason || 'unknown rejection');
+      console.error('[runtime] unhandled rejection:', e.reason);
+      _reportRuntimeIssue('unhandledrejection', detail);
+    });
+
+    ['beforeunload', 'pagehide', 'popstate', 'hashchange'].forEach((evtName) => {
+      window.addEventListener(evtName, () => {
+        _reportRuntimeIssue(evtName, _captureUiState(evtName));
+      });
+    });
+
+    document.addEventListener('click', (e) => {
+      const tracked = e.target instanceof Element
+        ? e.target.closest([
+            '#full-prefetch-factor',
+            '#full-pin-memory',
+            '[data-help="help-full-prefetch"]',
+            '[data-help="help-full-pin"]',
+            'label[for="caption-local-cpu-offload"]',
+            '#caption-local-cpu-offload',
+            '#caption-local-cpu-offload + .toggle__track',
+          ].join(', '))
+        : null;
+      if (!tracked) return;
+      const detail = tracked.id
+        ? `#${tracked.id}`
+        : tracked.getAttribute('data-help')
+          ? `[data-help="${tracked.getAttribute('data-help')}"]`
+          : tracked.getAttribute('for')
+            ? `label[for="${tracked.getAttribute('for')}"]`
+            : tracked.tagName.toLowerCase();
+      console.log('[runtime] tracked click:', detail, 'raw=', e.target);
+      _reportRuntimeIssue('tracked-click', detail);
+      _reportRuntimeIssue('ui-state', _captureUiState(`post-click:${detail}`));
+      setTimeout(() => {
+        _reportRuntimeIssue('ui-state', _captureUiState(`post-click+150:${detail}`));
+      }, 150);
+      setTimeout(() => {
+        _reportRuntimeIssue('ui-state', _captureUiState(`post-click+500:${detail}`));
+      }, 500);
+    }, true);
   }
 
   async function boot() {
@@ -820,6 +913,13 @@ document.addEventListener("keydown", (e) => {
           } catch (e) {
             console.warn('[boot] could not apply saved settings to DOM:', e);
           }
+          // Sync settings model values into the caption panel fields
+          const _syncCaptionModel = (settingsId, captionId) => {
+            const v = document.getElementById(settingsId)?.value;
+            const el = document.getElementById(captionId);
+            if (v && el) el.value = v;
+          };
+          _syncCaptionModel("settings-gemini-model", "caption-gemini-model");
         }
       } catch (e) {
         console.warn('[boot] could not load saved settings:', e);
@@ -870,10 +970,7 @@ document.addEventListener("keydown", (e) => {
       })();
       errEl.textContent = 'Boot failed: ' + msg;
       errEl.style.display = 'block';
-      const _errBridge = window.sidestepElectron || window.pywebview?.api;
-      if (_errBridge?.onBootError) {
-        _errBridge.onBootError(msg);
-      }
+      _reportRuntimeIssue('boot-failed', msg);
     }
   }
 
@@ -942,6 +1039,8 @@ document.addEventListener("keydown", (e) => {
       API.signalShutdown();
     }
   });
+
+  _installRuntimeHooks();
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", boot);

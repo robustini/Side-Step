@@ -26,7 +26,7 @@ from sidestep_engine.ui.prompt_helpers import (
 
 def _default_shift(a: dict) -> float:
     """Return default shift value based on selected model variant."""
-    base = a.get("base_model", a.get("model_variant", "turbo"))
+    base = a.get("base_model", a.get("model_variant", "base"))
     if isinstance(base, str) and "turbo" in base.lower():
         return 3.0
     return 1.0
@@ -34,7 +34,7 @@ def _default_shift(a: dict) -> float:
 
 def _default_inference_steps(a: dict) -> int:
     """Return default num_inference_steps based on selected model variant."""
-    base = a.get("base_model", a.get("model_variant", "turbo"))
+    base = a.get("base_model", a.get("model_variant", "base"))
     if isinstance(base, str) and "turbo" in base.lower():
         return 8
     return 50

@@ -26,6 +26,18 @@ def _levers_flow_math(a: dict) -> None:
     _is_turbo = is_turbo(a)
 
     print_message(
+        "Timestep mode controls how training timesteps are sampled:\n"
+        "  continuous = logit-normal distribution (recommended for all variants)\n"
+        "  discrete  = 8-step turbo inference schedule (legacy turbo behavior)",
+        kind="dim",
+    )
+    a["timestep_mode"] = ask(
+        "Timestep sampling mode",
+        default=a.get("timestep_mode", "continuous"),
+        choices=["continuous", "discrete"],
+    )
+
+    print_message(
         "Timestep mu/sigma control the logit-normal sampling distribution.\n"
         "  These are read from the model config — change only if you know\n"
         "  what you're doing.",
@@ -158,6 +170,25 @@ def _levers_tracking(a: dict) -> None:
         "Early stop patience (0 = disabled)",
         default=a.get("early_stop_patience", 0), type_fn=int,
         validate_fn=lambda v: "Must be >= 0" if v < 0 else None,
+    )
+    a["target_loss_floor"] = ask(
+        "Target loss LR floor (0.01 = 1%)",
+        default=a.get("target_loss_floor", 0.01), type_fn=float,
+        validate_fn=lambda v: "Must be > 0 and <= 1" if v <= 0 or v > 1 else None,
+    )
+    _sched_warmup = a.get("warmup_steps", 0)
+    _cruise_default = max(a.get("target_loss_warmup", 50), _sched_warmup) if _sched_warmup > 0 else a.get("target_loss_warmup", 50)
+    _cruise_min = _sched_warmup if _sched_warmup > 0 else 0
+    _cruise_hint = f" (min {_sched_warmup}, linked to scheduler warmup)" if _sched_warmup > 0 else ""
+    a["target_loss_warmup"] = ask(
+        f"Cruise control warmup steps{_cruise_hint}",
+        default=_cruise_default, type_fn=int,
+        validate_fn=lambda v, _m=_cruise_min: f"Must be >= {_m} (scheduler warmup)" if v < _m else ("Must be >= 0" if v < 0 else None),
+    )
+    a["target_loss_smoothing"] = ask(
+        "Cruise control smoothing (EMA beta)",
+        default=a.get("target_loss_smoothing", 0.98), type_fn=float,
+        validate_fn=lambda v: "Must be > 0 and < 1" if v <= 0 or v >= 1 else None,
     )
 
 

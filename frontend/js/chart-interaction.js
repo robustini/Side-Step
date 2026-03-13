@@ -1,14 +1,38 @@
 /* ============================================================
    Side-Step GUI — Chart Interaction (shared)
-   TensorBoard-like interactions:
-   - drag box: zoom to selected span
-   - modifier+drag: pan current window
-   - wheel: cursor-centered zoom with clamped bounds
+   TensorBoard-faithful interactions:
+   - drag box → animated zoom (TB: 750ms cubic-in-out)
+   - Alt/Shift+drag: pan
+   - Alt+wheel: cursor-centered zoom
    - double-click: reset zoom
    ============================================================ */
 
 const ChartInteraction = (() => {
   "use strict";
+
+  // TB easing: cubic-in-out (d3.easeCubicInOut equivalent)
+  function _easeCubicInOut(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+
+  /**
+   * TB-faithful closest-index finder (matches findClosestIndex in
+   * line_chart_interactive_utils.ts using d3.bisect on sorted x-values).
+   * Returns the index of the data point closest to targetX.
+   */
+  function _findClosestIndex(sortedXs, targetX) {
+    if (sortedXs.length === 0) return 0;
+    // Binary search (equivalent to d3.bisect)
+    let lo = 0, hi = sortedXs.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (sortedXs[mid] < targetX) lo = mid + 1;
+      else hi = mid;
+    }
+    const right = Math.min(lo, sortedXs.length - 1);
+    const left = Math.max(0, right - 1);
+    return Math.abs(sortedXs[left] - targetX) <= Math.abs(sortedXs[right] - targetX) ? left : right;
+  }
 
   /**
    * Wire interactive chart controls on a chart area.
@@ -19,9 +43,10 @@ const ChartInteraction = (() => {
    * @param {function} opts.setRange     - (lo, hi) => void
    * @param {function} opts.zoomReset    - () => void
    * @param {function} [opts.formatTip]  - (dataIdx, frac) => HTML string
+   * @param {function} [opts.onHover]    - (dataIdx) => void — called on hover with data index
+   * @param {function} [opts.onLeave]    - () => void — called when mouse leaves chart
    * @param {number}   [opts.minRange]   - minimum zoom window in samples
    * @param {number}   [opts.zoomStep]   - wheel zoom step (fraction, default 0.16)
-   * @param {string}   [opts.panModifier]- 'shift' | 'alt' | 'ctrl' | 'meta'
    * @param {boolean}  [opts.enableDoubleClickReset] - reset zoom on dblclick
    */
   function wire(opts) {
@@ -29,32 +54,54 @@ const ChartInteraction = (() => {
     const svg = document.getElementById(opts.svgId);
     if (!area || !svg) return;
 
+    // Always ensure area is a positioning context for overlays
+    area.style.position = "relative";
+
     // Reuse existing overlay/crosshair/tooltip or create new ones
     const _find = (cls) => area.querySelector("." + cls) || area.querySelector("[id*='" + cls.replace("chart-","") + "']");
-    let overlay = _find("chart-drag-overlay");
-    if (!overlay) { overlay = document.createElement("div"); overlay.className = "chart-drag-overlay"; overlay.style.cssText = "display:none;position:absolute;background:rgba(0,200,255,0.12);pointer-events:none;z-index:2;"; area.style.position = "relative"; area.appendChild(overlay); }
+    let overlay = _find("chart-drag-overlay") || _find("chart-zoom-box");
+    if (!overlay) { overlay = document.createElement("div"); overlay.className = "chart-zoom-box"; overlay.style.cssText = "display:none;position:absolute;pointer-events:none;z-index:2;"; area.appendChild(overlay); }
     let crosshair = _find("chart-crosshair");
-    if (!crosshair) { crosshair = document.createElement("div"); crosshair.className = "chart-crosshair"; crosshair.style.cssText = "display:none;position:absolute;top:0;width:1px;height:100%;background:var(--border);pointer-events:none;z-index:3;"; area.appendChild(crosshair); }
+    if (!crosshair) { crosshair = document.createElement("div"); crosshair.className = "chart-crosshair"; crosshair.style.cssText = "display:none;position:absolute;top:0;bottom:0;width:1px;background:var(--muted);opacity:0.5;pointer-events:none;z-index:3;"; area.appendChild(crosshair); }
     let tooltip = _find("chart-tooltip");
-    if (!tooltip) { tooltip = document.createElement("div"); tooltip.className = "chart-tooltip"; tooltip.style.cssText = "display:none;position:absolute;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:2px 6px;font-size:10px;font-family:var(--font-mono);pointer-events:none;z-index:4;white-space:nowrap;"; area.appendChild(tooltip); }
+    if (!tooltip) { tooltip = document.createElement("div"); tooltip.className = "chart-tooltip--tb"; tooltip.style.cssText = "display:none;"; area.appendChild(tooltip); }
+
+    // Crosshair cursor by default
+    area.style.cursor = 'crosshair';
+
+    // Zoom hint badge — shown on non-Alt scroll (TB-style)
+    const zoomHint = area.querySelector('.chart-zoom-hint');
+    let _hintTimer = null;
+    function _showZoomHint() {
+      if (!zoomHint) return;
+      zoomHint.classList.add('visible');
+      clearTimeout(_hintTimer);
+      _hintTimer = setTimeout(() => zoomHint.classList.remove('visible'), 3000);
+    }
+
+    // Alt or Shift key → grab cursor for pan mode hint
+    const _onKeyDown = (e) => { if ((e.key === 'Shift' || e.key === 'Alt') && !panning) area.style.cursor = 'grab'; };
+    const _onKeyUp = (e) => { if ((e.key === 'Shift' || e.key === 'Alt') && !panning) area.style.cursor = 'crosshair'; };
+    document.addEventListener('keydown', _onKeyDown);
+    document.addEventListener('keyup', _onKeyUp);
 
     const minRange = Math.max(2, Number(opts.minRange) || 2);
-    const zoomStep = Math.min(0.45, Math.max(0.05, Number(opts.zoomStep) || 0.16));
-    const panModifier = String(opts.panModifier || "shift").toLowerCase();
+    const SCROLL_ZOOM_SPEED_FACTOR = 0.01; // TB constant from line_chart_interactive_view.ts
     const allowDoubleClickReset = opts.enableDoubleClickReset !== false;
+    const ZOOM_ANIM_MS = 400; // TB uses 750ms, we use 400ms for snappier feel
 
-    let dragStart = null, panning = false, panStartX = 0, panView = null;
+    let dragStart = null, panning = false, panView = null;
+    let _interacting = false; // true during drag/pan — suppresses tooltip
+    let _animating = false;
 
     function pxToFrac(clientX) {
       const r = svg.getBoundingClientRect();
       return Math.max(0, Math.min(1, (clientX - r.left) / (r.width || 1)));
     }
 
+    // TB: both Alt and Shift trigger pan
     function isPanGesture(e) {
-      if (panModifier === "alt") return !!e.altKey;
-      if (panModifier === "ctrl") return !!e.ctrlKey;
-      if (panModifier === "meta") return !!e.metaKey;
-      return !!e.shiftKey;
+      return !!e.altKey || !!e.shiftKey;
     }
 
     function clampRange(lo, hi, totalLen) {
@@ -71,33 +118,69 @@ const ChartInteraction = (() => {
       return { lo: start, hi: end };
     }
 
+    // Animated zoom transition (TB: d3.easeCubicInOut over 750ms)
+    function _animateZoom(fromLo, fromHi, toLo, toHi, totalLen) {
+      _animating = true;
+      const start = performance.now();
+      function tick(now) {
+        const elapsed = now - start;
+        const t = Math.min(1, elapsed / ZOOM_ANIM_MS);
+        const e = _easeCubicInOut(t);
+        const lo = fromLo + (toLo - fromLo) * e;
+        const hi = fromHi + (toHi - fromHi) * e;
+        const clamped = clampRange(lo, hi, totalLen);
+        opts.setRange(clamped.lo, clamped.hi);
+        if (t < 1) {
+          requestAnimationFrame(tick);
+        } else {
+          _animating = false;
+        }
+      }
+      requestAnimationFrame(tick);
+    }
+
+    function _hideTooltip() {
+      tooltip.style.display = "none";
+      crosshair.style.display = "none";
+      if (opts.onLeave) opts.onLeave();
+    }
+
     area.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
-      if (isPanGesture(e)) {
+      // TB: left or middle button; middle always pans
+      const isLeft = e.button === 0;
+      const isMiddle = e.button === 1;
+      if (!isLeft && !isMiddle) return;
+      if (isMiddle || (isLeft && isPanGesture(e))) {
         panning = true;
-        panStartX = e.clientX;
+        _interacting = true;
         panView = opts.getView();
-        area.style.cursor = "grabbing";
+        area.style.cursor = 'grabbing';
+        _hideTooltip();
         e.preventDefault();
         return;
       }
       const r = area.getBoundingClientRect();
       dragStart = { x: e.clientX, left: e.clientX - r.left };
+      _interacting = true;
       overlay.style.display = "none";
+      _hideTooltip();
       e.preventDefault();
     });
 
     const _onDocMouseMove = (e) => {
       if (panning && panView) {
+        // TB uses event.movementX for smooth incremental pan
         const r = svg.getBoundingClientRect();
-        const dx = e.clientX - panStartX;
+        const deltaX = -e.movementX;
         const dataRange = panView.endIdx - panView.startIdx;
-        const shift = -(dx / (r.width || 1)) * dataRange;
-        let lo = panView.startIdx + shift, hi = lo + dataRange;
-        if (lo < 0) { lo = 0; hi = dataRange; }
-        if (hi > panView.totalLen) { hi = panView.totalLen; lo = Math.max(0, hi - dataRange); }
+        const shift = (deltaX / (r.width || 1)) * dataRange;
+        let lo = panView.startIdx + shift, hi = panView.endIdx + shift;
+        if (lo < 0) { hi -= lo; lo = 0; }
+        if (hi > panView.totalLen) { lo -= (hi - panView.totalLen); hi = panView.totalLen; lo = Math.max(0, lo); }
         const clamped = clampRange(lo, hi, panView.totalLen);
         opts.setRange(clamped.lo, clamped.hi);
+        // Update panView so next movementX is relative
+        panView = opts.getView();
         return;
       }
       if (dragStart) {
@@ -109,23 +192,30 @@ const ChartInteraction = (() => {
         if (x2 - x1 > 4) { overlay.style.display = "block"; overlay.style.left = x1 + "px"; overlay.style.top = "0"; overlay.style.width = (x2 - x1) + "px"; overlay.style.height = svgR.height + "px"; }
         return;
       }
-      _updateTip(e);
+      if (!_interacting && !_animating) _updateTip(e);
     };
 
     const _onDocMouseUp = (e) => {
-      if (panning) { panning = false; panView = null; area.style.cursor = ""; return; }
+      if (panning) {
+        panning = false;
+        _interacting = false;
+        panView = null;
+        area.style.cursor = (e.shiftKey || e.altKey) ? 'grab' : 'crosshair';
+        return;
+      }
       if (!dragStart) return;
       const dx = Math.abs(e.clientX - dragStart.x);
       overlay.style.display = "none";
+      _interacting = false;
       if (dx > 8) {
         const view = opts.getView();
         const f1 = pxToFrac(Math.min(dragStart.x, e.clientX));
         const f2 = pxToFrac(Math.max(dragStart.x, e.clientX));
-        const lo = view.startIdx + f1 * (view.endIdx - view.startIdx);
-        const hi = view.startIdx + f2 * (view.endIdx - view.startIdx);
-        if (hi - lo >= 1) {
-          const clamped = clampRange(lo, hi, view.totalLen);
-          opts.setRange(clamped.lo, clamped.hi);
+        const toLo = view.startIdx + f1 * (view.endIdx - view.startIdx);
+        const toHi = view.startIdx + f2 * (view.endIdx - view.startIdx);
+        if (toHi - toLo >= 1) {
+          // Animated zoom (TB-style)
+          _animateZoom(view.startIdx, view.endIdx, toLo, toHi, view.totalLen);
         }
       }
       dragStart = null;
@@ -138,23 +228,38 @@ const ChartInteraction = (() => {
     area._ciCleanup = () => {
       document.removeEventListener("mousemove", _onDocMouseMove);
       document.removeEventListener("mouseup", _onDocMouseUp);
+      document.removeEventListener('keydown', _onKeyDown);
+      document.removeEventListener('keyup', _onKeyUp);
     };
 
+    // TB: Alt+wheel to zoom; plain scroll shows hint (3s timer)
     area.addEventListener("wheel", (e) => {
+      const shouldZoom = !e.ctrlKey && !e.shiftKey && e.altKey;
+      if (!shouldZoom) {
+        _showZoomHint();
+        return;
+      }
       e.preventDefault();
       const view = opts.getView();
       if (view.totalLen <= 2) return;
+      // TB deltaMode handling (line_chart_interactive_utils.ts)
+      let scrollDeltaFactor = 1;
+      if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) scrollDeltaFactor = 8;
+      else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) scrollDeltaFactor = 20;
+      const scrollMagnitude = e.deltaY * scrollDeltaFactor;
+      // TB: clip zoom-in to -0.95 to avoid inverting extent
+      const zoomFactor = scrollMagnitude < 0
+        ? Math.max(scrollMagnitude * SCROLL_ZOOM_SPEED_FACTOR, -0.95)
+        : scrollMagnitude * SCROLL_ZOOM_SPEED_FACTOR;
+      // Cursor-centered zoom (TB getProposedViewExtentOnZoom)
       const frac = pxToFrac(e.clientX);
-      const cursor = view.startIdx + frac * (view.endIdx - view.startIdx);
       const range = view.endIdx - view.startIdx;
-      const factor = e.deltaY > 0 ? (1 + zoomStep) : Math.max(0.2, 1 - zoomStep);
-      const nr = Math.max(minRange, range * factor);
-      if (nr >= view.totalLen * 0.995) {
+      const newLo = view.startIdx - frac * range * zoomFactor;
+      const newHi = view.endIdx + (1 - frac) * range * zoomFactor;
+      if (newHi - newLo >= view.totalLen * 0.995) {
         opts.zoomReset();
-      } else {
-        const lo = cursor - frac * nr;
-        const hi = cursor + (1 - frac) * nr;
-        const clamped = clampRange(lo, hi, view.totalLen);
+      } else if (newHi - newLo >= minRange) {
+        const clamped = clampRange(newLo, newHi, view.totalLen);
         opts.setRange(clamped.lo, clamped.hi);
       }
     }, { passive: false });
@@ -174,23 +279,41 @@ const ChartInteraction = (() => {
       }
       const view = opts.getView();
       const frac = (e.clientX - r.left) / r.width;
-      const dataIdx = Math.max(0, Math.min(
-        Math.max(0, view.totalLen - 1),
-        Math.round(view.startIdx + frac * (view.endIdx - view.startIdx))
-      ));
+      const rawIdx = view.startIdx + frac * (view.endIdx - view.startIdx);
+      // Snap mode: round to nearest data point. Free mode: keep fractional for interpolation.
+      const snap = typeof opts.getSnap === 'function' ? opts.getSnap() : true;
+      const dataIdx = snap
+        ? Math.max(0, Math.min(Math.max(0, view.totalLen - 1), Math.round(rawIdx)))
+        : Math.max(0, Math.min(Math.max(0, view.totalLen - 1), rawIdx));
       const xPos = e.clientX - ar.left;
       crosshair.style.display = "block"; crosshair.style.left = xPos + "px";
-      tooltip.style.display = "block"; tooltip.style.left = (xPos + 12) + "px"; tooltip.style.top = (e.clientY - ar.top - 30) + "px";
+
+      // Bottom-anchored tooltip, clamped horizontally
+      tooltip.style.display = "block";
+      const tipW = tooltip.offsetWidth || 120;
+      let tipLeft = xPos - tipW / 2;
+      tipLeft = Math.max(4, Math.min(tipLeft, ar.width - tipW - 4));
+      tooltip.style.left = tipLeft + "px";
+      tooltip.style.bottom = "4px";
+      tooltip.style.top = "";
+
       if (opts.formatTip) {
         const tip = opts.formatTip(dataIdx, frac);
-        if (opts.allowUnsafeHtml) { tooltip.innerHTML = tip; } else { tooltip.textContent = tip; }
+        tooltip.innerHTML = tip;
       } else {
-        tooltip.textContent = '#' + dataIdx;
+        tooltip.textContent = '#' + (snap ? dataIdx : dataIdx.toFixed(1));
       }
+      if (opts.onHover) opts.onHover(dataIdx);
     }
 
-    area.addEventListener("mouseleave", () => { tooltip.style.display = "none"; crosshair.style.display = "none"; });
+    area.addEventListener("mouseleave", () => {
+      if (!_interacting) {
+        tooltip.style.display = "none";
+        crosshair.style.display = "none";
+        if (opts.onLeave) opts.onLeave();
+      }
+    });
   }
 
-  return { wire };
+  return { wire, findClosestIndex: _findClosestIndex };
 })();

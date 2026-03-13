@@ -36,8 +36,7 @@ const Tutorial = (() => {
       text: '<strong>Ez Mode</strong> — pick a dataset, pick a model, hit Start. That\'s it.<br><br>You\'re already here. Let\'s look around.' },
 
     { target: '#ez-model-variant',
-      text: '<strong>Model variant.</strong> Turbo is fast. Base is balanced. SFT follows prompts closely.<br><br><em>Click the dropdown to see options.</em>',
-      interact: '#ez-model-variant' },
+      text: '<strong>Model variant.</strong> Base is recommended for training — LoRAs trained on base transfer to turbo/SFT at inference. SFT follows prompts closely. Turbo is fast at inference.' },
 
     { target: '#ez-dataset-dir',
       text: '<strong>Dataset.</strong> Shows folders from your configured directories. Empty? Set them in Settings later.' },

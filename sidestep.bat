@@ -29,7 +29,7 @@ if not "%~1"=="" (
 REM Interactive menu
 echo.
 echo   ░▒▓ S I D E · S T E P ▓▒░
-echo   v1.0.1
+echo   v1.1.0-beta
 echo.
 echo   [1]  Wizard   -- Interactive CLI training wizard
 echo   [2]  GUI      -- Launch web GUI in browser

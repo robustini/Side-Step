@@ -374,6 +374,7 @@
   gap: var(--space-sm);
   cursor: pointer;
   font-size: var(--font-size-base);
+  position: relative;
 }
 .toggle__track {
   width: 34px;
@@ -405,6 +406,8 @@
 }
 .toggle input {
   position: absolute;
+  top: 0;
+  left: 0;
   width: 1px;
   height: 1px;
   padding: 0;
@@ -1084,6 +1087,388 @@
   justify-content: center;
   color: var(--muted);
   font-size: var(--font-size-sm);
+}
+
+/* ============================================================
+   Monitor Chart Grid (TensorBoard-inspired CSS Grid layout)
+   ============================================================ */
+.monitor-chart-grid {
+  display: grid;
+  grid-template-areas:
+    "yaxis  series  yaxis-r"
+    "dot    xaxis   .";
+  grid-template-columns: 50px 1fr 52px;
+  grid-template-rows: 1fr 24px;
+  min-height: 240px;
+  resize: vertical;
+  overflow: hidden;
+  background: var(--bg);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius);
+  position: relative;
+}
+.monitor-chart-grid__yaxis {
+  grid-area: yaxis;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border-right: 1px solid #aaa;
+  padding-right: 4px;
+  pointer-events: none;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  user-select: none;
+  mask-image: linear-gradient(to bottom, rgba(0,0,0,0) 0%, #000 8%, #000 92%, rgba(0,0,0,0) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,0) 0%, #000 8%, #000 92%, rgba(0,0,0,0) 100%);
+}
+.monitor-chart-grid__yaxis-r {
+  grid-area: yaxis-r;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border-left: 1px solid #aaa;
+  padding-left: 4px;
+  pointer-events: none;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--secondary);
+  user-select: none;
+  mask-image: linear-gradient(to bottom, rgba(0,0,0,0) 0%, #000 8%, #000 92%, rgba(0,0,0,0) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,0) 0%, #000 8%, #000 92%, rgba(0,0,0,0) 100%);
+}
+.monitor-chart-grid__series {
+  grid-area: series;
+  position: relative;
+  overflow: hidden;
+  cursor: crosshair;
+}
+.monitor-chart-grid__series.panning { cursor: grabbing; }
+.monitor-chart-grid__series svg {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+}
+/* TB zoom box — visible on dark theme */
+.chart-zoom-box {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+.monitor-chart-grid__xaxis {
+  grid-area: xaxis;
+  position: relative;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  padding-top: 3px;
+  pointer-events: none;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  user-select: none;
+  overflow: hidden;
+  mask-image: linear-gradient(to right, rgba(0,0,0,0) 0%, #000 6%, #000 94%, rgba(0,0,0,0) 100%);
+  -webkit-mask-image: linear-gradient(to right, rgba(0,0,0,0) 0%, #000 6%, #000 94%, rgba(0,0,0,0) 100%);
+}
+.monitor-chart-grid__dot {
+  grid-area: dot;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+.monitor-chart-grid__dot::after {
+  content: '';
+  display: block;
+  width: 1px;
+  height: 1px;
+  background: #aaa;
+}
+
+/* Chart legend (positioned inside series area) */
+.monitor-chart-grid__legend {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 2;
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  pointer-events: none;
+}
+
+/* ============================================================
+   Chart Tooltip — dark TensorBoard style
+   ============================================================ */
+.chart-tooltip--tb {
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  border-radius: 4px;
+  font-size: 0.9em;
+  padding: 5px;
+  pointer-events: none;
+  contain: paint style layout;
+  position: absolute;
+  bottom: 28px;
+  z-index: 6;
+  white-space: nowrap;
+}
+.chart-tooltip--tb table  { border-spacing: 4px; }
+.chart-tooltip--tb th     { font-weight: 500; text-align: left; padding-bottom: 5px; }
+.chart-tooltip--tb td     { text-align: left; padding: 2px 5px; }
+.chart-tooltip--tb td:last-child { text-align: right; }
+/* Hover dot markers (HTML overlay — TB style: filled circle, subtle white border) */
+.chart-hover-dot {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  transition: left 0.04s linear, top 0.04s linear;
+}
+.chart-hover-dot--smooth {
+  width: 10px; height: 10px;
+  background: var(--primary);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  z-index: 4;
+}
+.chart-hover-dot--raw {
+  width: 10px; height: 10px;
+  background: var(--primary);
+  opacity: 0.5;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  z-index: 3;
+}
+.chart-hover-dot--ma5 {
+  width: 10px; height: 10px;
+  background: var(--changed);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  z-index: 3;
+}
+.chart-hover-dot--lr {
+  width: 10px; height: 10px;
+  background: var(--secondary);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  z-index: 3;
+}
+
+.chart-tooltip__swatch {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  vertical-align: middle;
+}
+
+/* ============================================================
+   Chart Zoom Hint Badge
+   ============================================================ */
+.chart-zoom-hint {
+  position: absolute;
+  top: 10px;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0;
+  transition: opacity 0.5s;
+}
+.chart-zoom-hint.visible { opacity: 1; }
+.chart-zoom-hint::after {
+  content: attr(data-hint);
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 5px;
+  color: #fff;
+  padding: 5px 10px;
+  user-select: none;
+}
+
+/* ============================================================
+   Mini-chart panels (TensorBoard additional scalars)
+   ============================================================ */
+.monitor-mini-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+.monitor-mini-charts:empty { display: none; }
+.mini-chart-panel {
+  background: var(--bg);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px 4px;
+  min-height: 100px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  animation: miniChartIn 0.25s ease-out both;
+  contain: layout style;
+}
+.mini-chart-panel:hover {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary), 0 0 8px rgba(92,207,230,0.15);
+}
+.mini-chart-panel.mini-chart-panel--active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary), 0 0 12px rgba(92,207,230,0.25);
+}
+@keyframes miniChartIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.mini-chart-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 2px;
+}
+.mini-chart-panel__label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.mini-chart-panel__value {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text);
+  font-weight: 600;
+}
+/* Grid layout: y-axis | chart | x-axis row */
+.mini-chart-panel__grid {
+  display: grid;
+  grid-template-areas:
+    'yaxis series'
+    '.     xaxis';
+  grid-template-columns: 32px 1fr;
+  grid-template-rows: 1fr 14px;
+  height: 72px;
+}
+.mini-chart-panel__yaxis {
+  grid-area: yaxis;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding-right: 3px;
+  font-size: 8px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  overflow: hidden;
+}
+.mini-chart-panel__xaxis {
+  grid-area: xaxis;
+  display: flex;
+  justify-content: space-between;
+  font-size: 8px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  padding-top: 1px;
+  overflow: hidden;
+}
+.mini-chart-panel__series {
+  grid-area: series;
+  position: relative;
+  overflow: hidden;
+}
+.mini-chart-panel__svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  position: absolute;
+  top: 0; left: 0;
+}
+/* Grid lines inside mini SVG */
+.mini-chart-panel__svg line.grid-line {
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.mini-chart-panel__svg line.grid-line.zero {
+  stroke: rgba(255, 255, 255, 0.15);
+  stroke-width: 1.5;
+}
+/* Histogram paths */
+.mini-chart-panel__svg path.hist-path {
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  fill-opacity: 0.35;
+  stroke-opacity: 0.7;
+}
+/* End dot on mini-charts — HTML overlay positioned by % */
+.mini-end-dot {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 2;
+}
+/* Drag reorder states */
+.mini-chart-panel--dragging {
+  opacity: 0.4;
+  border-style: dashed;
+}
+.mini-chart-panel--dragover {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary), 0 0 12px rgba(92,207,230,0.3);
+}
+.mini-chart-panel[draggable="true"] { cursor: grab; }
+.mini-chart-panel[draggable="true"]:active { cursor: grabbing; }
+
+/* ============================================================
+   Expanded mini-chart (full-width, same design as main chart)
+   ============================================================ */
+.monitor-expanded-chart {
+  background: var(--panel);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-sm);
+  animation: miniChartIn 0.2s ease-out both;
+}
+.monitor-expanded-chart__header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-md);
+  margin-bottom: var(--space-xs);
+}
+.monitor-expanded-chart__title {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.monitor-expanded-chart__value {
+  font-size: 14px;
+  font-family: var(--font-mono);
+  color: var(--text);
+  font-weight: 600;
+}
+.monitor-expanded-chart__close {
+  margin-left: auto;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 6px;
+}
+.monitor-chart-grid--expanded {
+  min-height: 200px;
+  resize: vertical;
+}
+
+/* Snap-to-grid toggle */
+.chart-snap {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  min-width: 26px;
+}
+.chart-snap[aria-pressed="true"] {
+  background: var(--primary);
+  color: var(--bg);
 }
 
 /* ============================================================

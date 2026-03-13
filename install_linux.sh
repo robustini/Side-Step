@@ -45,7 +45,7 @@ echo -e "${CYAN}  ███████ ██ ██   ██ █████  
 echo -e "${CYAN}       ██ ██ ██   ██ ██                 ██    ██    ██      ██${NC}"
 echo -e "${CYAN}  ███████ ██ ██████  ███████       ███████    ██    ███████ ██${NC}"
 echo ""
-echo -e "  ${GREEN}Installer (v1.0.1)${NC}"
+echo -e "  ${GREEN}Installer (v1.1.2-beta)${NC}"
 echo ""
 
 # ── Pre-flight ──────────────────────────────────────────────────────
@@ -148,6 +148,39 @@ fi
 echo ""
 echo "  GUI window priority: Electron → pywebview → system browser"
 echo "  (Each falls back automatically if the previous is unavailable.)"
+
+# ── Linux desktop integration (icon + .desktop file) ─────────────────
+if [[ "$(uname)" != "Darwin" ]]; then
+    step "Linux desktop integration (taskbar icon)"
+
+    DESKTOP_SRC="$SIDE_DIR/assets/side-step.desktop"
+    ICON_SRC="$SIDE_DIR/frontend/assets/icon.png"
+    DESKTOP_DEST="$HOME/.local/share/applications/side-step.desktop"
+    ICON_DEST="$HOME/.local/share/icons/hicolor/256x256/apps/side-step.png"
+
+    if [[ -f "$DESKTOP_SRC" && -f "$ICON_SRC" ]]; then
+        # Install icon to XDG icon directory
+        mkdir -p "$(dirname "$ICON_DEST")"
+        cp -f "$ICON_SRC" "$ICON_DEST"
+
+        # Install .desktop file with absolute paths (user may not have PATH symlink)
+        mkdir -p "$(dirname "$DESKTOP_DEST")"
+        sed -e "s|^Icon=.*|Icon=$ICON_DEST|" \
+            -e "s|^Exec=.*|Exec=$SIDE_DIR/sidestep.sh gui|" \
+            "$DESKTOP_SRC" > "$DESKTOP_DEST"
+        chmod +x "$DESKTOP_DEST"
+
+        # Update icon cache if available
+        if command -v gtk-update-icon-cache &>/dev/null; then
+            gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+        fi
+
+        ok "Desktop file installed: $DESKTOP_DEST"
+        ok "Icon installed: $ICON_DEST"
+    else
+        warn "Desktop file or icon not found in project assets — skipping."
+    fi
+fi
 
 # ── Model checkpoints (opt-in) ──────────────────────────────────────
 CKPT_DIR="$SIDE_DIR/checkpoints"

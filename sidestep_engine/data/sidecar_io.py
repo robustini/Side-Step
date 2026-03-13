@@ -15,13 +15,15 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from sidestep_engine.data.structured_helpers import extract_caption_from_blob, looks_like_mapping_blob
+
 logger = logging.getLogger(__name__)
 
 # Keys written to sidecars (order preserved in output)
-_FIELD_ORDER = ("caption", "genre", "bpm", "key", "signature")
+_FIELD_ORDER = ("caption", "genre", "bpm", "key", "signature", "is_instrumental")
 
 # Fields that the AI pipeline can generate
-GENERATED_FIELDS = {"caption", "lyrics", "genre", "bpm", "key", "signature"}
+GENERATED_FIELDS = {"caption", "lyrics", "genre", "bpm", "key", "signature", "is_instrumental"}
 
 
 def read_sidecar(path: Path) -> Dict[str, str]:
@@ -53,6 +55,7 @@ def merge_fields(
     Policies:
         ``fill_missing``: only write keys that are absent or empty.
         ``overwrite_caption``: overwrite ``caption`` only; fill rest.
+        ``overwrite_lyrics``: overwrite ``lyrics`` only; fill rest.
         ``overwrite_all``: overwrite all generated fields.
 
     Args:
@@ -69,12 +72,24 @@ def merge_fields(
         if not value:
             continue
 
+        if key == "caption":
+            clean_caption = extract_caption_from_blob(value) if looks_like_mapping_blob(value) else str(value).strip()
+            if not clean_caption:
+                continue
+            value = clean_caption
+
         if policy == "fill_missing":
             if not merged.get(key, "").strip():
                 merged[key] = value
 
         elif policy == "overwrite_caption":
             if key == "caption":
+                merged[key] = value
+            elif not merged.get(key, "").strip():
+                merged[key] = value
+
+        elif policy == "overwrite_lyrics":
+            if key == "lyrics":
                 merged[key] = value
             elif not merged.get(key, "").strip():
                 merged[key] = value
@@ -120,6 +135,12 @@ def write_sidecar(path: Path, data: Dict[str, str]) -> None:
             shutil.copy2(str(path), str(bak_path))
         except OSError:
             pass
+
+    data = dict(data or {})
+    if "caption" in data:
+        cap = data.get("caption", "")
+        if looks_like_mapping_blob(cap):
+            data["caption"] = extract_caption_from_blob(cap)
 
     lines: list[str] = []
     written_keys: set[str] = set()

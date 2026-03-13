@@ -19,6 +19,42 @@ _RETRY_BACKOFF_BASE = 2.0
 _REQUEST_TIMEOUT = 15
 
 
+def _is_wrapped_encoding_error(exc: Exception) -> bool:
+    """Return True if *exc* (or its cause chain) is a Unicode encoding error.
+
+    Libraries like ``lyricsgenius`` and ``requests`` sometimes wrap
+    ``UnicodeEncodeError`` inside their own exception types.  This helper
+    walks the ``__cause__`` / ``__context__`` chain and also checks the
+    stringified message as a fallback.
+    """
+    cur: BaseException | None = exc
+    for _ in range(6):
+        if cur is None:
+            break
+        if isinstance(cur, (UnicodeEncodeError, UnicodeDecodeError)):
+            return True
+        cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+    msg = str(exc).lower()
+    return "codec can't encode" in msg or "codec can't decode" in msg
+
+
+def _safe_ascii_query(text: str) -> str:
+    """Normalize a search query for safe HTTP transport.
+
+    Applies NFC normalization and transliterates non-ASCII characters
+    to their closest ASCII equivalents where possible (e.g. accented
+    letters → base letters).  This prevents ``latin-1`` / ``ascii``
+    codec errors deep inside the ``requests`` / ``lyricsgenius`` stack.
+    """
+    import unicodedata
+    # NFC normalize, then NFKD decompose to split accents from base chars
+    text = unicodedata.normalize("NFC", text)
+    decomposed = unicodedata.normalize("NFKD", text)
+    # Keep only ASCII characters (strips accents/diacritics)
+    ascii_approx = decomposed.encode("ascii", "ignore").decode("ascii")
+    return ascii_approx.strip() or text.strip()
+
+
 def fetch_lyrics(
     artist: str,
     title: str,
@@ -51,6 +87,13 @@ def fetch_lyrics(
         )
         return None
 
+    # Sanitize queries to avoid encoding errors in the HTTP transport
+    artist = _safe_ascii_query(artist)
+    title = _safe_ascii_query(title)
+    # API tokens are pure ASCII; strip invisible Unicode from copy-paste
+    # ("Bearer <token>" header must be latin-1 safe)
+    api_token = api_token.encode("ascii", "ignore").decode("ascii").strip()
+
     genius = lyricsgenius.Genius(
         api_token,
         timeout=timeout,
@@ -68,7 +111,22 @@ def fetch_lyrics(
                 return None
             return _clean_genius_text(song.lyrics)
 
+        except (UnicodeEncodeError, UnicodeDecodeError) as exc:
+            # Encoding errors are deterministic — retrying won't help.
+            # Typically caused by non-ASCII characters in Genius API
+            # response data that lyricsgenius passes into HTTP headers.
+            logger.warning(
+                "Genius encoding error (non-retryable): %s — %s - %s",
+                exc, artist, title,
+            )
+            return None
         except Exception as exc:
+            if _is_wrapped_encoding_error(exc):
+                logger.warning(
+                    "Genius encoding error (non-retryable): %s — %s - %s",
+                    exc, artist, title,
+                )
+                return None
             wait = _RETRY_BACKOFF_BASE ** attempt
             logger.warning(
                 "Genius API error (attempt %d/%d): %s — retrying in %.1fs",
@@ -129,6 +187,8 @@ def validate_token(api_token: str, timeout: int = 10) -> bool:
         return False
 
     try:
+        # Strip invisible non-ASCII from copy-paste (tokens are pure ASCII)
+        api_token = api_token.encode("ascii", "ignore").decode("ascii").strip()
         genius = lyricsgenius.Genius(
             api_token, timeout=timeout, verbose=False
         )

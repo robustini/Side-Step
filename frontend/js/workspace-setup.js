@@ -171,7 +171,7 @@ const WorkspaceSetup = (() => {
       card.innerHTML = `
         <div class="preset-card__name">${_e(p.name)} ${tag}</div>
         <div class="preset-card__desc">${_e(p.description || "")}</div>
-        <div class="preset-card__meta">${_e(p.adapter_type || "lora")} | r=${_e(p.rank || "?")} | lr=${_e(p.lr || "?")} | ${_e(p.epochs || "?")} epochs</div>
+        <div class="preset-card__meta">${_e(p.adapter_type || "lora")} | r=${_e(p.rank || "?")} | lr=${_e(p.learning_rate || "?")} | ${_e(p.epochs || "?")} epochs</div>
         <div class="preset-card__actions">
           <button class="btn btn--sm btn--primary preset-apply" data-name="${_e(p.name)}">Apply to Configure</button>
           ${!p.builtin ? '<button class="btn btn--sm btn--danger preset-delete" data-name="' + _e(p.name) + '">Delete</button>' : ""}
@@ -192,13 +192,15 @@ const WorkspaceSetup = (() => {
       adapter_type:"full-adapter-type", model_variant:"full-model-variant", rank:"full-rank", alpha:"full-alpha", dropout:"full-dropout",
       lr:"full-lr", batch_size:"full-batch", grad_accum:"full-grad-accum", epochs:"full-epochs", warmup_steps:"full-warmup",
       max_steps:"full-max-steps", dataset_repeats:"full-dataset-repeats", shift:"full-shift", num_inference_steps:"full-inference-steps",
-      cfg_ratio:"full-cfg-dropout", loss_weighting:"full-loss-weighting", snr_gamma:"full-snr-gamma", gradient_checkpointing_ratio:"full-grad-ckpt-ratio",
-      chunk_duration:"full-chunk-duration", chunk_decay_every:"full-chunk-decay-every", optimizer_type:"full-optimizer", scheduler:"full-scheduler",
+      timestep_mode:"full-timestep-mode", cfg_ratio:"full-cfg-dropout", loss_weighting:"full-loss-weighting", snr_gamma:"full-snr-gamma", gradient_checkpointing_ratio:"full-grad-ckpt-ratio",
+      chunk_duration:"full-chunk-duration", max_latent_length:"full-max-latent-length", chunk_decay_every:"full-chunk-decay-every", optimizer_type:"full-optimizer", scheduler:"full-scheduler",
       scheduler_formula:"full-scheduler-formula", device:"full-device", precision:"full-precision", save_every:"full-save-every",
       log_every:"full-log-every", log_heavy_every:"full-log-heavy-every", save_best_after:"full-save-best-after", early_stop:"full-early-stop",
       weight_decay:"full-weight-decay", max_grad_norm:"full-max-grad-norm", seed:"full-seed", warmup_start_factor:"full-warmup-start-factor",
       cosine_eta_min_ratio:"full-cosine-eta-min", cosine_restarts_count:"full-cosine-restarts", ema_decay:"full-ema-decay", val_split:"full-val-split",
       adaptive_timestep_ratio:"full-adaptive-timestep", save_best_every_n_steps:"full-save-best-every-n-steps",
+      target_loss:"full-target-loss", target_loss_floor:"full-target-loss-floor",
+      target_loss_warmup:"full-target-loss-warmup", target_loss_smoothing:"full-target-loss-smoothing",
       timestep_mu:"full-timestep-mu", timestep_sigma:"full-timestep-sigma", num_workers:"full-num-workers", prefetch_factor:"full-prefetch-factor",
       bias:"full-bias", attention_type:"full-attention-type", lokr_linear_dim:"full-lokr-dim", lokr_linear_alpha:"full-lokr-alpha",
       lokr_factor:"full-lokr-factor", loha_linear_dim:"full-loha-dim", loha_linear_alpha:"full-loha-alpha", loha_factor:"full-loha-factor",
@@ -242,6 +244,14 @@ const WorkspaceSetup = (() => {
       const _touched = [];
       Object.entries(valMap).forEach(([k, id]) => { if (p[k] != null) { const el = $(id); if (el) { el.value = p[k]; _touched.push(el); } } });
       Object.entries(chkMap).forEach(([k, id]) => { if (p[k] != null) { const el = $(id); if (el) { el.checked = !!p[k]; _touched.push(el); } } });
+      const cropModeEl = $("full-crop-mode");
+      if (cropModeEl) {
+        if (p.crop_mode) cropModeEl.value = p.crop_mode;
+        else if (p.max_latent_length != null && Number(p.max_latent_length) > 0) cropModeEl.value = "latent";
+        else if (p.chunk_duration != null && Number(p.chunk_duration) > 0) cropModeEl.value = "seconds";
+        else cropModeEl.value = "full";
+        _touched.push(cropModeEl);
+      }
       _touched.forEach((el) => {
         el.dispatchEvent(new Event("change", { bubbles: true }));
         if (el.type !== "checkbox" && el.tagName !== "SELECT") el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -278,8 +288,8 @@ const WorkspaceSetup = (() => {
     };
 
     const _MASK_CHAR = "\u2022";
-    const _SENSITIVE_KEYS = new Set(["gemini_api_key", "openai_api_key", "genius_api_token"]);
-    function _isMasked(v) { return typeof v === "string" && v.includes(_MASK_CHAR); }
+    const _SENSITIVE_KEYS = new Set(["gemini_api_key", "openai_api_key", "genius_api_token", "hf_token"]);
+    function _isMasked(v) { return typeof v === "string" && v.length > 0 && /^[\u2022\s]+$/.test(v); }
     function _gatherSettings() {
       const raw = {
         checkpoint_dir: $("settings-checkpoint-dir")?.value,
@@ -292,11 +302,13 @@ const WorkspaceSetup = (() => {
         openai_api_key: $("settings-openai-key")?.value,
         openai_base_url: $("settings-openai-base")?.value,
         genius_api_token: $("settings-genius-token")?.value,
+        transcriber_server_url: $("settings-transcriber-server-url")?.value,
+        music_flamingo_url: $("settings-music-flamingo-url")?.value,
+        hf_token: $("settings-hf-token")?.value,
       };
       const out = {};
       Object.entries(raw).forEach(([k, v]) => {
         if (v == null || _isMasked(v)) return;
-        if (_SENSITIVE_KEYS.has(k) && v === "") return;
         out[k] = v;
       });
       return out;
@@ -327,7 +339,7 @@ const WorkspaceSetup = (() => {
     on("click", "#btn-validate-gemini", async () => {
       const key = $("settings-gemini-key")?.value;
       if (!key || key.includes("\u2022")) { showToast("Enter a Gemini API key first", "warn"); return; }
-      const model = $("settings-gemini-model")?.value || "gemini-2.0-flash";
+      const model = $("settings-gemini-model")?.value || "gemini-2.5-flash";
       showToast("Validating Gemini key...", "info");
       try {
         const r = await API.validateApiKey("gemini", key, { model });
@@ -375,10 +387,23 @@ const WorkspaceSetup = (() => {
       const ckptDir = $("settings-checkpoint-dir")?.value || Defaults.get("settings-checkpoint-dir") || "checkpoints";
       const models = await API.fetchModels(ckptDir);
       const variants = (models.models || []).map(m => m.name || m);
+      // Priority: base > sft > turbo when current value doesn't match any scanned model
+      const _pickDefault = (variants, current) => {
+        if (variants.includes(current)) return current;
+        const lv = variants.map(v => v.toLowerCase());
+        const baseIdx = lv.findIndex(v => v.includes("base"));
+        if (baseIdx >= 0) return variants[baseIdx];
+        const sftIdx = lv.findIndex(v => v.includes("sft"));
+        if (sftIdx >= 0) return variants[sftIdx];
+        const turboIdx = lv.findIndex(v => v.includes("turbo"));
+        if (turboIdx >= 0) return variants[turboIdx];
+        return variants[0] || current;
+      };
       document.querySelectorAll(".model-picker").forEach((sel) => {
         const current = sel.value;
         const savedDefault = sel.dataset.default;
-        BatchDOM.setOptions(sel, variants, current);
+        const preferred = _pickDefault(variants, current);
+        BatchDOM.setOptions(sel, variants, preferred);
         if (savedDefault) sel.dataset.default = savedDefault;
       });
       const det = $("ez-checkpoint-detect");
@@ -431,6 +456,8 @@ const WorkspaceSetup = (() => {
     const gemKey = $("settings-gemini-key")?.value || "";
     const oaiKey = $("settings-openai-key")?.value || "";
     const genKey = $("settings-genius-token")?.value || "";
+    const transcriberUrl = $("settings-transcriber-server-url")?.value || "";
+    const musicFlamingoUrl = $("settings-music-flamingo-url")?.value || "";
     const _setBadgeState = (el, configured) => {
       if (!el) return;
       el.textContent = configured ? "configured [ok]" : "not set";
@@ -441,6 +468,8 @@ const WorkspaceSetup = (() => {
     _setBadgeState($("caption-gemini-badge"), gemKey && !gemKey.includes("Not set"));
     _setBadgeState($("caption-openai-badge"), !!oaiKey);
     _setBadgeState($("caption-genius-badge"), !!genKey);
+    _setBadgeState($("caption-transcriber-badge"), !!transcriberUrl);
+    _setBadgeState($("caption-music-flamingo-badge"), !!musicFlamingoUrl);
 
     if (typeof CustomSelect !== "undefined" && CustomSelect.refresh) CustomSelect.refresh();
   }

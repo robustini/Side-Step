@@ -18,10 +18,9 @@ from typing import Any, Optional
 
 from sidestep_engine.data.caption_config import (
     DEFAULT_GEMINI_MODEL,
-    DEFAULT_MAX_TOKENS,
-    DEFAULT_TEMPERATURE,
     build_user_prompt,
     get_system_prompt,
+    resolve_generation_settings,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,6 +31,24 @@ _UPLOAD_TIMEOUT_S = 120
 
 _QUOTA_RE = re.compile(r"Quota exceeded", re.IGNORECASE)
 _RATE_LIMIT_RE = re.compile(r"(rate.?limit|resource.?exhausted|429)", re.IGNORECASE)
+_ENCODING_RE = re.compile(r"codec can't (encode|decode)", re.IGNORECASE)
+
+
+def _is_encoding_error(exc: Exception) -> bool:
+    """Return True if *exc* (or its cause chain) is a Unicode encoding error.
+
+    The ``google-genai`` SDK wraps ``UnicodeEncodeError`` inside its own
+    exception types, so a bare ``except UnicodeEncodeError`` never fires.
+    This walks the cause chain and checks the stringified message.
+    """
+    cur: BaseException | None = exc
+    for _ in range(6):
+        if cur is None:
+            break
+        if isinstance(cur, (UnicodeEncodeError, UnicodeDecodeError)):
+            return True
+        cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+    return bool(_ENCODING_RE.search(str(exc)))
 
 
 def _make_client(api_key: str) -> Any:
@@ -41,7 +58,7 @@ def _make_client(api_key: str) -> Any:
         ImportError: If ``google-genai`` is not installed.
     """
     from google import genai
-    return genai.Client(api_key=api_key)
+    return genai.Client(api_key=api_key.strip())
 
 
 def _simplify_error(exc: Exception) -> str:
@@ -155,11 +172,17 @@ def generate_caption(
     audio_path: Optional[Path] = None,
     lyrics_excerpt: str = "",
     model: str = DEFAULT_GEMINI_MODEL,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    top_p: Optional[float] = None,
+    google_search: bool = False,
     max_retries: int = _MAX_RETRIES,
 ) -> Optional[str]:
     """Generate a caption for a song using Gemini.
 
     Uploads audio for multimodal analysis when *audio_path* is given.
+    When *google_search* is ``True``, enables Grounding with Google Search
+    so the model can look up additional context about the track online.
     Returns caption string or ``None`` on failure.
     """
     try:
@@ -168,23 +191,65 @@ def generate_caption(
         logger.error("google-genai is not installed. "
                      "Install with: pip install google-genai")
         return None
+    generation = resolve_generation_settings(
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
+    )
 
-    user_prompt = build_user_prompt(title, artist, lyrics_excerpt)
+    # Convert lossless audio to MP3 before uploading to save bandwidth
+    from sidestep_engine.data.audio_convert import ensure_mp3, cleanup_temp
 
-    # Upload audio (graceful fallback on failure)
+    upload_path: Optional[Path] = None
+    upload_is_temp = False
     audio_file = None
     if audio_path and audio_path.is_file():
+        upload_path, upload_is_temp = ensure_mp3(audio_path)
         try:
-            audio_file = _upload_audio(client, audio_path)
+            logger.debug("Upload path repr: %r", str(upload_path))
+            audio_file = _upload_audio(client, upload_path)
+        except (UnicodeEncodeError, UnicodeDecodeError) as exc:
+            logger.warning(
+                "Audio upload encoding error: %s  "
+                "upload_path=%r  title=%r  artist=%r",
+                exc, str(upload_path), title, artist,
+            )
         except Exception as exc:
-            logger.warning("Audio upload failed, text-only fallback: %s", exc)
+            if _is_encoding_error(exc):
+                logger.warning(
+                    "Audio upload encoding error (wrapped): %s  "
+                    "upload_path=%r  title=%r  artist=%r",
+                    exc, str(upload_path), title, artist,
+                )
+            else:
+                logger.warning("Audio upload failed, text-only fallback: %s", exc)
+        finally:
+            cleanup_temp(upload_path, upload_is_temp)
+
+    logger.debug(
+        "Gemini inputs — title=%r  artist=%r  lyrics_excerpt[:40]=%r",
+        title, artist, lyrics_excerpt[:40],
+    )
+    user_prompt = build_user_prompt(
+        title,
+        artist,
+        lyrics_excerpt,
+        audio_attached=audio_file is not None,
+        google_search=google_search,
+    )
 
     content = [audio_file, user_prompt] if audio_file else [user_prompt]
     config = {
-        "system_instruction": get_system_prompt(),
-        "temperature": DEFAULT_TEMPERATURE,
-        "max_output_tokens": DEFAULT_MAX_TOKENS,
+        "temperature": float(generation["temperature"]),
+        "max_output_tokens": int(generation["max_tokens"]),
+        "top_p": float(generation["top_p"]),
     }
+    if google_search:
+        from google.genai import types as _gtypes
+        config["tools"] = [_gtypes.Tool(google_search=_gtypes.GoogleSearch())]
+    system_prompt = get_system_prompt("gemini")
+    if system_prompt:
+        config["system_instruction"] = system_prompt
 
     try:
         for attempt in range(max_retries):
@@ -198,7 +263,21 @@ def generate_caption(
                     return text
                 logger.warning("Gemini returned empty for: %s - %s", artist, title)
                 return None
+            except (UnicodeEncodeError, UnicodeDecodeError) as exc:
+                logger.error(
+                    "Gemini encoding error (non-retryable): %s  "
+                    "title=%r  artist=%r",
+                    exc, title, artist,
+                )
+                return None
             except Exception as exc:
+                if _is_encoding_error(exc):
+                    logger.error(
+                        "Gemini encoding error (non-retryable, wrapped): %s  "
+                        "title=%r  artist=%r",
+                        exc, title, artist,
+                    )
+                    return None
                 wait = _RETRY_BACKOFF_BASE ** attempt
                 short = _simplify_error(exc)
                 logger.warning("Gemini error (attempt %d/%d): %s — retrying in %.1fs",

@@ -45,7 +45,8 @@ def _step_provider_keys(a: dict) -> None:
     )
     from sidestep_engine.settings import (
         get_caption_provider, get_gemini_api_key, get_gemini_model,
-        get_genius_api_token,
+        get_genius_api_token, get_hf_token,
+        get_music_flamingo_url, get_transcriber_server_url,
         get_openai_api_key, get_openai_base_url, get_openai_model,
     )
 
@@ -58,6 +59,7 @@ def _step_provider_keys(a: dict) -> None:
             ("openai", "OpenAI / OpenAI-compatible"),
             ("local_8-10gb", "Local 8-10GB (Qwen2.5-Omni 4-bit)"),
             ("local_16gb", "Local 16GB+ (Qwen2.5-Omni bf16)"),
+            ("music_flamingo", "Music Flamingo"),
             ("skip", "Skip AI captions"),
         ],
         default=1 if get_caption_provider() == "gemini" else 2,
@@ -72,6 +74,17 @@ def _step_provider_keys(a: dict) -> None:
             "Local model: Qwen2.5-Omni-7B (~15 GB download on first use).\n"
             "No API key required. Run the installer script to pre-download.",
             kind="dim",
+        )
+    elif a["caption_provider"] == "music_flamingo":
+        a["_music_flamingo_url"] = _resolve_or_prompt(
+            get_music_flamingo_url(),
+            "Music Flamingo server URL",
+            "music_flamingo_url",
+        )
+        a["_hf_token"] = _resolve_or_prompt(
+            get_hf_token(),
+            "Hugging Face token (optional)",
+            "hf_token",
         )
     elif a["caption_provider"] == "gemini":
         a["_caption_key"] = _resolve_or_prompt(
@@ -108,22 +121,53 @@ def _step_provider_keys(a: dict) -> None:
                               base_url=a.get("_openai_base_url"),
                               model=a["_openai_model"])
 
-    # Resolve Genius token
-    a["_genius_token"] = _resolve_or_prompt(
-        get_genius_api_token(),
-        "Genius API token (leave empty to skip lyrics)",
-        "genius_api_token",
+    # Lyrics provider
+    a["_lyrics_provider"] = menu(
+        "Lyrics provider",
+        [
+            ("genius", "Genius"),
+            ("transcriber_server", "Transcriber Server"),
+            ("music_flamingo", "Music Flamingo"),
+            ("none", "Skip lyrics"),
+        ],
+        default=1,
+        allow_back=True,
     )
-    _validate_genius_token(a.get("_genius_token", ""))
+    if a["_lyrics_provider"] == "genius":
+        a["_genius_token"] = _resolve_or_prompt(
+            get_genius_api_token(),
+            "Genius API token (leave empty to skip lyrics)",
+            "genius_api_token",
+        )
+        _validate_genius_token(a.get("_genius_token", ""))
+    elif a["_lyrics_provider"] == "transcriber_server":
+        a["_transcriber_server_url"] = _resolve_or_prompt(
+            get_transcriber_server_url(),
+            "Transcriber Server URL",
+            "transcriber_server_url",
+        )
+    elif a["_lyrics_provider"] == "music_flamingo":
+        if not a.get("_music_flamingo_url"):
+            a["_music_flamingo_url"] = _resolve_or_prompt(
+                get_music_flamingo_url(),
+                "Music Flamingo server URL",
+                "music_flamingo_url",
+            )
+        if not a.get("_hf_token"):
+            a["_hf_token"] = _resolve_or_prompt(
+                get_hf_token(),
+                "Hugging Face token (optional)",
+                "hf_token",
+            )
 
 
 def _step_artist_resolution(a: dict) -> None:
-    """Step 4: default artist for Genius lookups."""
-    if not a.get("_genius_token"):
+    """Step 4: default artist for lyrics lookups."""
+    if a.get("_lyrics_provider", "none") == "none":
         return
     section("Artist Resolution")
     a["default_artist"] = ask(
-        "Default artist for Genius (empty = per-song detection)",
+        "Default artist (empty = per-song detection)",
         default=a.get("default_artist", ""), allow_back=True,
     )
 

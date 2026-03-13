@@ -23,7 +23,7 @@ TESTED_ACESTEP_COMMIT = "46116a6"
 """Short SHA of the upstream ``ace-step/ACE-Step-1.5`` commit that the
 vendored files were last synced from."""
 
-SIDESTEP_VERSION = "1.0.1"
+SIDESTEP_VERSION = "1.1.2-beta"
 """Current Side-Step release string."""
 
 

@@ -1,6 +1,6 @@
 # Side-Step Guide
 
-Welcome to the Side-Step documentation vault. This guide covers installation, training, and model management for Side-Step 1.0.1.
+Welcome to the Side-Step documentation vault. This guide covers installation, training, and model management for Side-Step 1.1.0-beta.
 
 ## Pages
 

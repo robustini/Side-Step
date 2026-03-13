@@ -76,7 +76,7 @@ def step_config_mode(a: dict) -> None:
 def _generate_run_base(a: dict) -> str:
     """Build the user-editable portion of the run name (no timestamp)."""
     adapter = a.get("adapter_type", "lora")
-    variant = a.get("model_variant", "turbo")
+    variant = a.get("model_variant", "base")
     return f"{adapter}_{variant}"
 
 
@@ -108,7 +108,7 @@ def step_required(a: dict) -> None:
     )
 
     section("Required Settings")
-    ask_model_and_checkpoint(a, default_variant="turbo", prompt_base_model=True)
+    ask_model_and_checkpoint(a, default_variant="base", prompt_base_model=True)
     show_whats_changed_notice()
     ask_dataset_folder(a, allow_audio=True)
 

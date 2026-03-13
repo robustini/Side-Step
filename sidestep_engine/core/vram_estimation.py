@@ -185,13 +185,22 @@ def _activation_bytes_per_layer(
     return total
 
 
-def _seq_len_from_chunk(chunk_duration_s: Optional[int]) -> int:
-    """Convert chunk duration (seconds) to decoder sequence length.
+def _seq_len_from_crop(
+    chunk_duration_s: Optional[int],
+    max_latent_length: Optional[int] = None,
+) -> int:
+    """Convert crop settings to decoder sequence length.
 
-    - ``None`` → default 60 s (matches default training config).
-    - ``0`` → 240 s worst-case (chunking disabled, full audio length).
-    - ``> 0`` → use the given value directly.
+    Priority:
+    - ``max_latent_length > 0`` → use that exact latent-frame crop.
+    - ``chunk_duration_s is None`` → default 60 s.
+    - ``chunk_duration_s <= 0`` → full-audio worst case.
+    - ``chunk_duration_s > 0`` → convert seconds to latent frames.
     """
+    if max_latent_length is not None and max_latent_length > 0:
+        latent_frames = int(max_latent_length)
+        return max(1, latent_frames // _PATCH_SIZE)
+
     if chunk_duration_s is None:
         seconds = _DEFAULT_CHUNK_S
     elif chunk_duration_s <= 0:
@@ -199,7 +208,7 @@ def _seq_len_from_chunk(chunk_duration_s: Optional[int]) -> int:
     else:
         seconds = chunk_duration_s
     latent_frames = int(seconds * _LATENT_FPS)
-    return latent_frames // _PATCH_SIZE
+    return max(1, latent_frames // _PATCH_SIZE)
 
 
 # =========================================================================
@@ -210,6 +219,7 @@ def estimate_activation_mb(
     num_uncheckpointed: int,
     batch_size: int = 1,
     chunk_duration_s: Optional[int] = None,
+    max_latent_length: Optional[int] = None,
     attn_backend: str = "sdpa",
 ) -> float:
     """Estimate activation VRAM in MB.
@@ -218,9 +228,10 @@ def estimate_activation_mb(
         num_uncheckpointed: Decoder layers NOT checkpointed.
         batch_size: Training batch size.
         chunk_duration_s: Chunk duration in seconds (``None`` = 60 s default).
+        max_latent_length: Crop length in latent frames.
         attn_backend: ``'flash_attention_2'``, ``'sdpa'``, or ``'eager'``.
     """
-    seq_len = _seq_len_from_chunk(chunk_duration_s)
+    seq_len = _seq_len_from_crop(chunk_duration_s, max_latent_length)
 
     # Half the layers use full attention, half use sliding.
     # For simplicity, all layers use the same per-layer cost since
@@ -317,6 +328,7 @@ def estimate_peak_vram_mb(
     checkpointing_ratio: float = 1.0,
     batch_size: int = 1,
     chunk_duration_s: Optional[int] = None,
+    max_latent_length: Optional[int] = None,
     attn_backend: str = "sdpa",
     offload_encoder: bool = True,
     adapter_type: str = "lora",
@@ -342,13 +354,13 @@ def estimate_peak_vram_mb(
         uncheckpointed = 1  # recomputation window always holds one layer
 
     activation_mb = estimate_activation_mb(
-        uncheckpointed, batch_size, chunk_duration_s, attn_backend,
+        uncheckpointed, batch_size, chunk_duration_s, max_latent_length, attn_backend,
     )
 
     # When checkpointing is active, checkpointed layers still store
     # their input hidden states (B * S * H * 2 per layer).
     if ckpt > 0:
-        seq_len = _seq_len_from_chunk(chunk_duration_s)
+        seq_len = _seq_len_from_crop(chunk_duration_s, max_latent_length)
         ckpt_input_bytes = ckpt * batch_size * seq_len * _HIDDEN * 2
         activation_mb += ckpt_input_bytes / (1024 * 1024)
 
@@ -434,6 +446,7 @@ def suggest_checkpointing(
     vram_total_mb: float,
     batch_size: int = 1,
     chunk_duration_s: Optional[int] = None,
+    max_latent_length: Optional[int] = None,
     attn_backend: str = "sdpa",
     offload_encoder: bool = True,
     num_layers: int = _DEFAULT_NUM_LAYERS,
@@ -454,7 +467,7 @@ def suggest_checkpointing(
 
     for ratio in (0.0, 0.25, 0.5, 0.75, 1.0):
         peak, _ = estimate_peak_vram_mb(
-            ratio, batch_size, chunk_duration_s, attn_backend,
+            ratio, batch_size, chunk_duration_s, max_latent_length, attn_backend,
             offload_encoder, adapter_type, rank, target_mlp,
             optimizer_type, num_layers,
         )
@@ -470,6 +483,7 @@ def build_checkpointing_options(
     vram_total_mb: Optional[float],
     batch_size: int = 1,
     chunk_duration_s: Optional[int] = None,
+    max_latent_length: Optional[int] = None,
     num_layers: int = _DEFAULT_NUM_LAYERS,
     attn_backend: str = "sdpa",
     adapter_type: str = "lora",
@@ -493,7 +507,7 @@ def build_checkpointing_options(
     options = []
     for ratio, name, speed in _LEVELS:
         peak, _ = estimate_peak_vram_mb(
-            ratio, batch_size, chunk_duration_s, attn_backend,
+            ratio, batch_size, chunk_duration_s, max_latent_length, attn_backend,
             offload_encoder, adapter_type, rank, target_mlp,
             optimizer_type, num_layers,
         )

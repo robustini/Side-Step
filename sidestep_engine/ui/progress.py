@@ -135,6 +135,14 @@ class TrainingStats:
     """Selected attention backend (flash_attention_2/sdpa/eager)."""
     device_label: str = ""
     """Device label shown in the live panel."""
+    loss_history: List[float] = field(default_factory=list)
+    """Rolling loss values for the sparkline chart (capped at 200)."""
+    lr_history: List[float] = field(default_factory=list)
+    """Rolling LR values for the sparkline chart (capped at 200)."""
+    epoch_loss_history: List[float] = field(default_factory=list)
+    """End-of-epoch loss for the epoch-level chart (capped at 200)."""
+    speed_history: List[float] = field(default_factory=list)
+    """Rolling steps/s throughput for the speed chart (capped at 200)."""
 
     @property
     def elapsed(self) -> float:
@@ -309,6 +317,175 @@ def _memory_snapshot_mb() -> tuple[float, float, float, float]:
     return value
 
 
+_SPARK_BLOCKS = " ▁▂▃▄▅▆▇█"
+
+# Maximum width (in columns) for the compact sparkline bar itself.
+_COMPACT_SPARK_MAX = 60
+
+
+def _downsample(values: List[float], width: int) -> list:
+    """Downsample *values* to *width* buckets (min-pooling)."""
+    n = len(values)
+    if n <= width:
+        return list(values)
+    buckets: list[float] = []
+    step = n / width
+    for i in range(width):
+        lo_idx = int(i * step)
+        hi_idx = max(lo_idx + 1, int((i + 1) * step))
+        chunk = values[lo_idx:hi_idx]
+        buckets.append(min(chunk))
+    return buckets
+
+
+def _sparkline(values: List[float], width: int = 50, label: str = "",
+               val_str: str = "", color: str = "cyan") -> "Text":
+    """Render a Unicode block-character sparkline as a Rich Text object.
+
+    Downsamples *values* to *width* columns using min-pooling (for loss)
+    or last-value (for LR), then maps each bucket to one of 9 block
+    levels (space + ▁▂▃▄▅▆▇█).
+    """
+    from rich.text import Text
+
+    width = min(width, _COMPACT_SPARK_MAX)
+
+    if not values or width < 4:
+        return Text("")
+
+    buckets = _downsample(values, width)
+
+    lo = min(buckets)
+    hi = max(buckets)
+    span = hi - lo if hi > lo else 1.0
+
+    chars = []
+    for v in buckets:
+        level = int(((v - lo) / span) * 8)
+        level = max(0, min(8, level))
+        chars.append(_SPARK_BLOCKS[level])
+
+    line = Text(no_wrap=True, overflow="ellipsis")
+    if label:
+        line.append(f"  {label:<5}", style="dim")
+    line.append("".join(chars), style=color)
+    if val_str:
+        line.append(f"  {val_str}", style="bold")
+    fmt = lambda v: (f"{v:.2e}" if abs(v) < 0.001 else
+                     (f"{v:.4f}" if abs(v) < 10 else
+                      (f"{v:.2f}" if abs(v) < 1000 else f"{v:.0f}")))
+    line.append(f"  (↓{fmt(lo)} ↑{fmt(hi)})", style="dim")
+    return line
+
+
+# ---- Full-size ASCII area chart (wide terminals) ----------------------------
+
+_CHART_HEIGHT = 6  # data rows per chart
+
+
+def _y_fmt_loss(v: float) -> str:
+    if abs(v) < 0.001:
+        return f"{v:.1e}"
+    if abs(v) < 10:
+        return f"{v:.3f}"
+    return f"{v:.1f}"
+
+
+def _y_fmt_lr(v: float) -> str:
+    return f"{v:.1e}"
+
+
+def _y_fmt_speed(v: float) -> str:
+    return f"{v:.2f}"
+
+
+def _ascii_chart(
+    values: List[float],
+    width: int = 40,
+    height: int = _CHART_HEIGHT,
+    title: str = "",
+    val_str: str = "",
+    color: str = "cyan",
+    y_fmt: Any = None,
+) -> "Text":
+    """Render a multi-line filled area chart as a single Rich Text.
+
+    *width* is the plot-area width (number of data columns).
+    *height* is the number of data rows.
+    Returns a single Text with embedded newlines.
+    """
+    from rich.text import Text
+
+    if not values or width < 4 or height < 2:
+        empty = Text()
+        if title:
+            empty.append(f"  {title}", style="bold dim")
+            empty.append("  (waiting for data)\n", style="dim")
+        return empty
+
+    buckets = _downsample(values, width)
+
+    lo = min(buckets)
+    hi = max(buckets)
+    is_flat = hi <= lo
+    if is_flat:
+        # Constant series: center a flat line in the chart
+        margin = abs(lo) * 0.1 if lo != 0 else 1.0
+        hi = lo + margin
+        lo = lo - margin
+    span = hi - lo
+
+    if y_fmt is None:
+        y_fmt = _y_fmt_loss
+
+    # Y-axis labels (top = hi, bottom = lo)
+    y_labels = [y_fmt(hi - span * r / (height - 1)) for r in range(height)]
+    y_w = max(len(l) for l in y_labels)
+
+    # Build grid: row 0 = top (highest value), row height-1 = bottom (lowest)
+    grid: list[list[str]] = []
+    for row in range(height):
+        row_chars: list[str] = []
+        for v in buckets:
+            # Position of value in [0, height*8) from bottom
+            pos = ((v - lo) / span) * (height * 8 - 1)
+            val_row_from_bottom = pos / 8.0
+            row_from_bottom = height - 1 - row
+
+            if row_from_bottom < int(val_row_from_bottom):
+                row_chars.append("█")
+            elif row_from_bottom == int(val_row_from_bottom):
+                frac = pos - int(val_row_from_bottom) * 8
+                level = max(0, min(8, int(frac)))
+                row_chars.append(_SPARK_BLOCKS[level] if level > 0 else " ")
+            else:
+                row_chars.append(" ")
+        grid.append(row_chars)
+
+    # Assemble into Rich Text
+    out = Text()
+    # Title line
+    out.append(f"  {title}", style="bold")
+    if val_str:
+        pad = max(1, y_w + 3 + len(buckets) - len(title) - len(val_str))
+        out.append(" " * pad)
+        out.append(val_str, style="bold")
+    out.append("\n")
+
+    # Chart rows
+    for row in range(height):
+        label = y_labels[row].rjust(y_w)
+        out.append(f"  {label} ", style="dim")
+        out.append("│", style="dim")
+        out.append("".join(grid[row]), style=color)
+        out.append("\n")
+
+    # Bottom axis
+    out.append(f"  {' ' * y_w} └{'─' * len(buckets)}", style="dim")
+
+    return out
+
+
 def _build_display(
     stats: TrainingStats,
     gpu: GPUMonitor,
@@ -467,9 +644,80 @@ def _build_display(
         epoch_bar_row,
     ]
     parts.extend(step_parts)
+
+    # -- Scalar charts (compact sparkline vs full-size) -----------------------
+    _WIDE_THRESHOLD = 120  # terminal cols needed for the 2×2 chart grid
+    term_width = 80
+    if console is not None:
+        try:
+            term_width = int(console.size.width)
+        except Exception:
+            pass
+    inner_width = term_width - 6  # border (2) + padding (2×2)
+    use_full_charts = inner_width >= _WIDE_THRESHOLD
+
     parts.extend([
         Text(""),
         metrics,
+    ])
+
+    if use_full_charts:
+        # Full-size 2×2 chart grid
+        chart_w = min(50, max(16, (inner_width - 8) // 2))  # per-chart plot width
+        loss_chart = _ascii_chart(
+            stats.loss_history, width=chart_w, title="Loss / Step",
+            val_str=f"{stats.last_loss:.4f}" if stats.last_loss > 0 else "",
+            color="cyan", y_fmt=_y_fmt_loss,
+        )
+        lr_chart = _ascii_chart(
+            stats.lr_history, width=chart_w, title="LR Schedule",
+            val_str=f"{stats.last_lr:.2e}" if stats._lr_seen else "",
+            color="magenta", y_fmt=_y_fmt_lr,
+        )
+        epoch_chart = _ascii_chart(
+            stats.epoch_loss_history, width=chart_w, title="Loss / Epoch",
+            val_str=(f"{stats.epoch_loss_history[-1]:.4f}"
+                     if stats.epoch_loss_history else ""),
+            color="green", y_fmt=_y_fmt_loss,
+        )
+        speed_chart = _ascii_chart(
+            stats.speed_history, width=chart_w, title="Steps / s",
+            val_str=(f"{stats.speed_history[-1]:.2f}"
+                     if stats.speed_history else ""),
+            color="yellow", y_fmt=_y_fmt_speed,
+        )
+        chart_grid = Table(
+            show_header=False, show_edge=False, box=None,
+            expand=True, padding=(0, 2),
+        )
+        chart_grid.add_column(ratio=1)
+        chart_grid.add_column(ratio=1)
+        chart_grid.add_row(loss_chart, lr_chart)
+        chart_grid.add_row(Text(""), Text(""))
+        chart_grid.add_row(epoch_chart, speed_chart)
+        parts.append(Text(""))
+        parts.append(chart_grid)
+    else:
+        # Compact sparklines (capped width, leave ~40 chars for label+value+range)
+        spark_width = min(_COMPACT_SPARK_MAX, max(16, inner_width - 40))
+        spark_parts: list = []
+        if stats.loss_history:
+            spark_parts.append(_sparkline(
+                stats.loss_history, width=spark_width, label="Loss",
+                val_str=f"{stats.last_loss:.4f}" if stats.last_loss > 0 else "",
+                color="cyan",
+            ))
+        if stats.lr_history:
+            spark_parts.append(_sparkline(
+                stats.lr_history, width=spark_width, label="LR",
+                val_str=f"{stats.last_lr:.2e}" if stats._lr_seen else "",
+                color="magenta",
+            ))
+        if spark_parts:
+            parts.append(Text(""))
+            parts.extend(spark_parts)
+
+    parts.extend([
         Text(""),
         Text.from_markup(vram_line),
     ])
@@ -711,6 +959,26 @@ def _process_structured(update: TrainingUpdate, stats: TrainingStats) -> None:
     if update.kind == "step":
         stats.record_step()
         stats.steps_this_session += 1
+        # Record for sparkline / full charts
+        if update.loss > 0:
+            stats.loss_history.append(update.loss)
+            if len(stats.loss_history) > 200:
+                stats.loss_history = stats.loss_history[-200:]
+        if update.lr > 0:
+            stats.lr_history.append(update.lr)
+            if len(stats.lr_history) > 200:
+                stats.lr_history = stats.lr_history[-200:]
+        # Speed (steps/s) — record every step for the chart
+        spd = stats.samples_per_sec
+        if spd > 0:
+            stats.speed_history.append(spd)
+            if len(stats.speed_history) > 200:
+                stats.speed_history = stats.speed_history[-200:]
+
+    if update.kind == "epoch" and update.loss > 0:
+        stats.epoch_loss_history.append(update.loss)
+        if len(stats.epoch_loss_history) > 200:
+            stats.epoch_loss_history = stats.epoch_loss_history[-200:]
 
     # Track step position within the current epoch.
     # Derived from global_step so the bar stays correct even when
@@ -770,3 +1038,19 @@ def _process_tuple(step: int, loss: float, msg: str, stats: TrainingStats) -> No
     if msg.startswith("Epoch") and "Step" in msg and "Loss" in msg:
         stats.record_step()
         stats.steps_this_session += 1
+        # Record for sparkline / full charts
+        if loss > 0:
+            stats.loss_history.append(loss)
+            if len(stats.loss_history) > 200:
+                stats.loss_history = stats.loss_history[-200:]
+        spd = stats.samples_per_sec
+        if spd > 0:
+            stats.speed_history.append(spd)
+            if len(stats.speed_history) > 200:
+                stats.speed_history = stats.speed_history[-200:]
+
+    # Epoch-end loss (tuple path: [OK] Epoch lines carry the final loss)
+    if msg.startswith("[OK]") and "Epoch" in msg and loss > 0:
+        stats.epoch_loss_history.append(loss)
+        if len(stats.epoch_loss_history) > 200:
+            stats.epoch_loss_history = stats.epoch_loss_history[-200:]

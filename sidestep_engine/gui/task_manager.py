@@ -10,6 +10,7 @@ Manages long-running operations:
 
 from __future__ import annotations
 
+import glob
 import json
 import logging
 import math
@@ -30,6 +31,12 @@ from typing import Any, Callable, Dict, List, Optional
 from sidestep_engine.core.progress_writer import sanitize_floats as _sanitize_floats
 
 logger = logging.getLogger(__name__)
+_MASK_CHAR = "•"
+
+
+def _is_masked_secret(value: Any) -> bool:
+    return isinstance(value, str) and _MASK_CHAR in value
+
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -246,6 +253,13 @@ class TaskManager:
         if task.progress_file:
             threading.Thread(target=self._tail_progress, args=(task,), daemon=True).start()
 
+        # Start tfevents reader thread for richer scalar data
+        log_dir = self._resolve_tb_log_dir(config)
+        if log_dir:
+            threading.Thread(
+                target=self._tail_tfevents, args=(task, log_dir), daemon=True
+            ).start()
+
         return {"ok": True, "task_id": task_id}
 
     def stop_training(self) -> Dict[str, Any]:
@@ -434,6 +448,221 @@ class TaskManager:
             pass
 
     # ==================================================================
+    # TensorBoard tfevents live reader
+    # ==================================================================
+
+    @staticmethod
+    def _resolve_tb_log_dir(config: Dict[str, Any]) -> Optional[Path]:
+        """Best-effort resolve of the TensorBoard log directory from config.
+
+        Checks multiple candidate paths and returns the first that either
+        already contains a tfevents file or is the most likely location.
+        TensorBoard's SummaryWriter creates ``{run_name}_v0`` directories,
+        so we also check for those.
+        """
+        output_dir = config.get("output_dir", "")
+        run_name = config.get("run_name", "")
+        log_dir_str = config.get("log_dir", "")
+        if not output_dir:
+            return None
+        out = (_PROJECT_ROOT / output_dir).resolve()
+
+        # Build candidate list, most-specific first
+        candidates: list[Path] = []
+        if log_dir_str and str(log_dir_str).strip():
+            log_root = (_PROJECT_ROOT / log_dir_str).resolve()
+        else:
+            # Default matches config_factory default: log_dir="runs" relative to CWD
+            log_root = (_PROJECT_ROOT / "runs").resolve()
+
+        # TensorBoard appends _v0, _v1, ... — check for exact run dirs
+        if run_name:
+            candidates.insert(0, log_root / run_name)
+            # Also probe versioned variants
+            for suffix in ("_v0", "_v1", "_v2"):
+                versioned = log_root / (run_name + suffix)
+                if versioned.is_dir():
+                    candidates.insert(0, versioned)
+        candidates.append(log_root)
+
+        # Return first candidate that already has a tfevents file
+        for c in candidates:
+            if c.is_dir() and glob.glob(str(c / "events.out.tfevents.*")):
+                logger.info("[tfevents] Found existing log dir: %s", c)
+                return c
+        # Otherwise return most specific candidate (it may appear later)
+        result = candidates[0] if candidates else None
+        logger.info("[tfevents] Will watch log dir: %s", result)
+        return result
+
+    def _tail_tfevents(self, task: Task, log_dir: Path) -> None:
+        """Poll tfevents files via EventAccumulator and push scalar data."""
+        try:
+            from tensorboard.backend.event_processing.event_accumulator import (
+                EventAccumulator,
+            )
+        except ImportError:
+            logger.warning("[tfevents] tensorboard package not installed, skipping live reader")
+            return
+
+        logger.info("[tfevents] Waiting for tfevents in %s ...", log_dir)
+        start_ts = task.started_at  # only consider files from this run
+
+        # Directories to search: the resolved dir itself, plus its parent
+        # (handles the case where resolved = runs/run_name but TB creates runs/run_name_v0)
+        search_dirs = [log_dir]
+        if log_dir.parent != log_dir:
+            search_dirs.append(log_dir.parent)
+
+        actual_dir = log_dir
+        for attempt in range(120):
+            if task.status != "running":
+                return
+            for sdir in search_dirs:
+                if not sdir.is_dir():
+                    continue
+                # Check direct path first
+                hits = glob.glob(str(sdir / "events.out.tfevents.*"))
+                if hits:
+                    recent = [h for h in hits if os.path.getmtime(h) >= start_ts - 5]
+                    if recent:
+                        actual_dir = sdir
+                        break
+                    if attempt >= 10:
+                        actual_dir = sdir
+                        break
+                # Search subdirectories (handles versioned dirs like run_name_v0)
+                hits = glob.glob(str(sdir / "**" / "events.out.tfevents.*"), recursive=True)
+                if hits:
+                    recent = [h for h in hits if os.path.getmtime(h) >= start_ts - 5]
+                    if recent:
+                        newest = max(recent, key=lambda p: os.path.getmtime(p))
+                        actual_dir = Path(newest).parent
+                        break
+                    if attempt >= 10:
+                        newest = max(hits, key=lambda p: os.path.getmtime(p))
+                        actual_dir = Path(newest).parent
+                        break
+            else:
+                # Inner loop didn't break — no hits yet, keep waiting
+                if attempt % 15 == 14:
+                    logger.debug("[tfevents] Still waiting for tfevents in %s (attempt %d)", log_dir, attempt + 1)
+                time.sleep(2)
+                continue
+            break  # inner for-else broke — we found something
+        else:
+            logger.warning("[tfevents] No tfevents file found in %s after 240s", log_dir)
+            return
+
+        logger.info("[tfevents] Found tfevents in %s, starting live reader", actual_dir)
+        from tensorboard.backend.event_processing.event_accumulator import (
+            HISTOGRAMS,
+            SCALARS,
+        )
+        # Silence TB's "No path found" INFO spam — TB uses a shared "tensorboard"
+        # logger via tb_logging.get_logger(), not per-module __name__ loggers.
+        logging.getLogger("tensorboard").setLevel(logging.WARNING)
+        size_guidance = {SCALARS: 0, HISTOGRAMS: 500}
+        ea = EventAccumulator(str(actual_dir), size_guidance=size_guidance)
+        ea.Reload()
+
+        # Block per-layer grad norms (too many tags, noisy); forward everything else
+        _BLOCKED_SCALAR_PREFIXES = ("grad_norm/",)
+        _WANTED_HISTOGRAM_TAGS = {
+            "train/timestep_distribution",
+        }
+        # Track how many events we've already sent per tag
+        sent_counts: Dict[str, int] = {}
+        hist_sent_counts: Dict[str, int] = {}
+
+        def _enqueue(msg: dict) -> None:
+            try:
+                self._training_queue.put_nowait(msg)
+            except queue.Full:
+                try:
+                    self._training_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    self._training_queue.put_nowait(msg)
+                except queue.Full:
+                    pass
+
+        while task.status == "running":
+            time.sleep(3)  # poll interval
+            try:
+                ea.Reload()
+            except Exception:
+                continue
+
+            # ---- Scalars (forward ALL except blocked prefixes) ----
+            try:
+                available_tags = set(ea.Tags().get("scalars", []))
+            except Exception:
+                available_tags = set()
+
+            for tag in available_tags:
+                if any(tag.startswith(p) for p in _BLOCKED_SCALAR_PREFIXES):
+                    continue
+                try:
+                    events = ea.Scalars(tag)
+                except Exception:
+                    continue
+                prev = sent_counts.get(tag, 0)
+                if len(events) <= prev:
+                    continue
+                new_events = events[prev:]
+                sent_counts[tag] = len(events)
+                for ev in new_events:
+                    _enqueue({
+                        "type": "tb_scalar",
+                        "tag": tag,
+                        "step": ev.step,
+                        "value": ev.value,
+                        "wall_time": ev.wall_time,
+                    })
+
+            # ---- Histograms ----
+            try:
+                hist_tags = set(ea.Tags().get("histograms", []))
+            except Exception:
+                hist_tags = set()
+
+            # Accept wanted histogram tags + any params/* tag
+            for tag in hist_tags:
+                if tag not in _WANTED_HISTOGRAM_TAGS and not tag.startswith("params/"):
+                    continue
+                try:
+                    events = ea.Histograms(tag)
+                except Exception:
+                    continue
+                prev = hist_sent_counts.get(tag, 0)
+                if len(events) <= prev:
+                    continue
+                new_events = events[prev:]
+                hist_sent_counts[tag] = len(events)
+                for ev in new_events:
+                    # ev.histogram_value has bucket_limit and bucket fields
+                    hv = ev.histogram_value
+                    bins = []
+                    limits = list(hv.bucket_limit)
+                    counts = list(hv.bucket)
+                    for i, count in enumerate(counts):
+                        if count <= 0:
+                            continue
+                        x = limits[i - 1] if i > 0 else (limits[0] - (limits[1] - limits[0]) if len(limits) > 1 else limits[0] - 1)
+                        dx = limits[i] - x if i < len(limits) else 1.0
+                        bins.append({"x": float(x), "dx": float(dx), "y": float(count)})
+                    if bins:
+                        _enqueue({
+                            "type": "tb_histogram",
+                            "tag": tag,
+                            "step": ev.step,
+                            "wall_time": ev.wall_time,
+                            "bins": bins,
+                        })
+
+    # ==================================================================
     # In-process tasks (preprocess, PP++, captions)
     # ==================================================================
 
@@ -453,7 +682,7 @@ class TaskManager:
                     audio_dir=config.get("audio_dir"),
                     output_dir=config.get("output_dir") or config.get("tensor_output", ""),
                     checkpoint_dir=config.get("checkpoint_dir", ""),
-                    variant=config.get("model_variant", "turbo"),
+                    variant=config.get("model_variant", "base"),
                     max_duration=config.get("max_duration", 0),
                     dataset_json=config.get("dataset_json"),
                     device=config.get("device", "auto"),
@@ -507,7 +736,7 @@ class TaskManager:
                 result = run_fisher_analysis(
                     checkpoint_dir=config.get("checkpoint_dir", ""),
                     dataset_dir=config.get("dataset_dir", ""),
-                    variant=config.get("model_variant", "turbo"),
+                    variant=config.get("model_variant", "base"),
                     base_rank=int(config.get("base_rank", config.get("rank", 64))),
                     rank_min=int(config.get("rank_min", 16)),
                     rank_max=int(config.get("rank_max", 128)),
@@ -571,18 +800,34 @@ class TaskManager:
 
                 def _build_caption_fn() -> Optional[Callable[..., Optional[str]]]:
                     provider = str(config.get("provider") or "skip").lower()
-                    if provider in ("skip", "lyrics_only"):
+                    if provider in ("skip", "lyrics_only", "none", "music_flamingo"):
                         return None
+
+                    generation_keys = (
+                        ("caption_temperature", "temperature"),
+                        ("caption_max_tokens", "max_tokens"),
+                        ("caption_top_p", "top_p"),
+                        ("caption_presence_penalty", "presence_penalty"),
+                        ("caption_frequency_penalty", "frequency_penalty"),
+                        ("caption_repetition_penalty", "repetition_penalty"),
+                    )
+                    generation_kwargs = {
+                        target: config.get(source)
+                        for source, target in generation_keys
+                        if config.get(source) is not None
+                    }
 
                     if provider == "gemini":
                         from sidestep_engine.data.caption_provider_gemini import (
                             generate_caption as _generate,
                         )
 
-                        key = str(config.get("gemini_key") or config.get("api_key") or "")
+                        key = str(config.get("gemini_key") or config.get("api_key") or "").strip()
                         model = config.get("gemini_model") or config.get("model")
                         if not key:
                             return None
+
+                        use_google_search = bool(config.get("gemini_google_search"))
 
                         def _run_caption(
                             title: str,
@@ -593,6 +838,8 @@ class TaskManager:
                             kwargs: Dict[str, Any] = {
                                 "audio_path": audio_path,
                                 "lyrics_excerpt": excerpt,
+                                "google_search": use_google_search,
+                                **generation_kwargs,
                             }
                             if model:
                                 kwargs["model"] = model
@@ -605,7 +852,7 @@ class TaskManager:
                             generate_caption as _generate,
                         )
 
-                        key = str(config.get("openai_key") or config.get("api_key") or "")
+                        key = str(config.get("openai_key") or config.get("api_key") or "").strip()
                         model = config.get("openai_model") or config.get("model")
                         base_url = config.get("openai_base") or config.get("base_url")
                         if not key:
@@ -620,6 +867,7 @@ class TaskManager:
                             kwargs: Dict[str, Any] = {
                                 "audio_path": audio_path,
                                 "lyrics_excerpt": excerpt,
+                                **generation_kwargs,
                             }
                             if model:
                                 kwargs["model"] = model
@@ -635,6 +883,9 @@ class TaskManager:
                         )
 
                         tier = "8-10gb" if provider == "local_8-10gb" else "16gb"
+                        allow_cpu_offload = bool(config.get("caption_local_cpu_offload"))
+
+                        _cancel = task.cancel_flag
 
                         def _run_caption(
                             title: str,
@@ -647,23 +898,108 @@ class TaskManager:
                                 audio_path=audio_path,
                                 lyrics_excerpt=excerpt,
                                 tier=tier,
+                                max_new_tokens=generation_kwargs.get("max_tokens"),
+                                temperature=generation_kwargs.get("temperature"),
+                                top_p=generation_kwargs.get("top_p"),
+                                repetition_penalty=generation_kwargs.get("repetition_penalty"),
+                                allow_cpu_offload=allow_cpu_offload,
+                                stop_event=_cancel,
                             )
 
                         return _run_caption
 
                     raise ValueError(f"Unknown caption provider: {provider}")
 
-                def _build_lyrics_fn() -> Optional[Callable[[str, str], Optional[str]]]:
-                    token = str(config.get("genius_token") or "").strip()
-                    if not token:
+                def _build_metadata_fn() -> Optional[Callable[[Path], Optional[Dict[str, str]]]]:
+                    provider = str(config.get("metadata_provider") or config.get("provider") or "skip").lower()
+                    if provider != "music_flamingo":
                         return None
 
-                    from sidestep_engine.data.lyrics_provider_genius import fetch_lyrics
+                    server_url = str(config.get("music_flamingo_url") or "").strip()
+                    hf_token = config.get("hf_token")
+                    if _is_masked_secret(hf_token) or not str(hf_token or "").strip():
+                        from sidestep_engine.settings import get_hf_token
+                        hf_token = get_hf_token()
+                    hf_token = str(hf_token or "").strip()
+                    if not server_url:
+                        return None
 
-                    def _run_lyrics(artist: str, title: str) -> Optional[str]:
-                        return fetch_lyrics(artist, title, token)
+                    from sidestep_engine.data.metadata_provider_music_flamingo import (
+                        fetch_music_flamingo_metadata as _generate_metadata,
+                    )
 
-                    return _run_lyrics
+                    def _run_metadata(audio_path: Path) -> Optional[Dict[str, str]]:
+                        return _generate_metadata(
+                            str(audio_path),
+                            server_url=server_url,
+                            hf_token=hf_token or None,
+                        )
+
+                    return _run_metadata
+
+                def _build_lyrics_fn() -> Optional[Callable[[str, str, Path], Optional[str]]]:
+                    lyrics_provider = str(config.get("lyrics_provider") or "").strip().lower()
+                    provider = str(config.get("provider") or "").strip().lower()
+                    if not lyrics_provider:
+                        lyrics_provider = "genius" if provider == "lyrics_only" else "none"
+
+                    if lyrics_provider == "none":
+                        return None
+
+                    if lyrics_provider == "genius":
+                        token = config.get("genius_token")
+                        if _is_masked_secret(token) or not str(token or "").strip():
+                            from sidestep_engine.settings import get_genius_api_token
+                            token = get_genius_api_token()
+                        token = str(token or "").strip()
+                        if not token:
+                            return None
+                        from sidestep_engine.data.lyrics_provider_genius import fetch_lyrics
+
+                        def _run_lyrics(artist: str, title: str, _audio_path: Path) -> Optional[str]:
+                            return fetch_lyrics(artist, title, token)
+
+                        return _run_lyrics
+
+                    if lyrics_provider == "transcriber_server":
+                        server_url = str(config.get("transcriber_server_url") or "").strip()
+                        if not server_url:
+                            return None
+                        from sidestep_engine.data.lyrics_provider_server import fetch_lyrics_from_server
+
+                        def _run_lyrics(artist: str, title: str, audio_path: Path) -> Optional[str]:
+                            return fetch_lyrics_from_server(
+                                str(audio_path),
+                                server_url=server_url,
+                                artist=artist,
+                                title=title,
+                            )
+
+                        return _run_lyrics
+
+                    if lyrics_provider == "music_flamingo":
+                        server_url = str(config.get("music_flamingo_url") or "").strip()
+                        hf_token = config.get("hf_token")
+                        if _is_masked_secret(hf_token) or not str(hf_token or "").strip():
+                            from sidestep_engine.settings import get_hf_token
+                            hf_token = get_hf_token()
+                        hf_token = str(hf_token or "").strip()
+                        if not server_url:
+                            return None
+                        from sidestep_engine.data.lyrics_provider_music_flamingo import fetch_lyrics_from_music_flamingo
+
+                        def _run_lyrics(artist: str, title: str, audio_path: Path) -> Optional[str]:
+                            return fetch_lyrics_from_music_flamingo(
+                                str(audio_path),
+                                server_url=server_url,
+                                artist=artist,
+                                title=title,
+                                hf_token=hf_token or None,
+                            )
+
+                        return _run_lyrics
+
+                    raise ValueError(f"Unknown lyrics provider: {lyrics_provider}")
 
                 audio_files = _resolve_audio_files()
                 total = len(audio_files)
@@ -674,6 +1010,7 @@ class TaskManager:
                     return
 
                 caption_fn = _build_caption_fn()
+                metadata_fn = _build_metadata_fn()
                 lyrics_fn = _build_lyrics_fn()
                 default_artist = str(config.get("default_artist") or "")
                 policy = str(config.get("overwrite") or "fill_missing")
@@ -688,7 +1025,8 @@ class TaskManager:
                         af,
                         default_artist=default_artist,
                         caption_fn=caption_fn,
-                        lyrics_fn=lyrics_fn,
+                        lyrics_fn=(lambda artist, title, af=af: lyrics_fn(artist, title, af)) if lyrics_fn else None,
+                        metadata_fn=metadata_fn,
                         policy=policy,
                     )
                     status = str(result.get("status") or "failed")
@@ -699,6 +1037,34 @@ class TaskManager:
                     msg = f"{af.name}: {status}"
                     if status == "failed" and result.get("error"):
                         msg = f"{af.name}: failed ({result.get('error')})"
+                    elif result.get("warnings"):
+                        msg = f"{af.name}: {status} ({'; '.join(result['warnings'])})"
+
+                    if result.get("error_code") == "local_caption_oom":
+                        task.oom_detected = True
+                        task.failure_reason = str(result.get("error") or "Local caption OOM")
+                        _push(
+                            task,
+                            i,
+                            total,
+                            msg,
+                            written=stats["written"],
+                            skipped=stats["skipped"],
+                            failed=stats["failed"],
+                            error_code="local_caption_oom",
+                        )
+                        task.cancel_flag.set()
+                        task.status = "failed"
+                        _push_event(
+                            task,
+                            "fail",
+                            task.failure_reason,
+                            result={**stats, "total": total},
+                            error_code="local_caption_oom",
+                            path=str(af),
+                            fatal=True,
+                        )
+                        return
 
                     _push(
                         task,

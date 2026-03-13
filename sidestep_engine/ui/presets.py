@@ -124,6 +124,38 @@ def _builtin_presets_dir() -> Path:
 
 # ---- Fields that belong in a preset ----------------------------------------
 
+# Expected types for numeric preset fields.  Used by load_preset() to
+# coerce string values back to the correct type (fixes presets that were
+# saved with numbers stored as JSON strings).
+PRESET_TYPES: dict[str, type] = {
+    # LoRA / DoRA
+    "rank": int, "alpha": int, "dropout": float,
+    # LoKR
+    "lokr_linear_dim": int, "lokr_linear_alpha": int, "lokr_factor": int,
+    # LoHA
+    "loha_linear_dim": int, "loha_linear_alpha": int, "loha_factor": int,
+    # OFT
+    "oft_block_size": int, "oft_eps": float,
+    # Training
+    "learning_rate": float, "batch_size": int, "gradient_accumulation": int,
+    "epochs": int, "warmup_steps": int, "max_steps": int,
+    "weight_decay": float, "max_grad_norm": float, "seed": int,
+    "dataset_repeats": int, "shift": float, "num_inference_steps": int,
+    "chunk_duration": int, "chunk_decay_every": int,
+    "cfg_ratio": float, "snr_gamma": float, "timestep_mode": str,
+    "save_every": int, "log_every": int, "log_heavy_every": int,
+    "save_best_after": int, "early_stop_patience": int,
+    "gradient_checkpointing_ratio": float,
+    # Cruise control
+    "target_loss": float, "target_loss_floor": float,
+    "target_loss_warmup": int, "target_loss_smoothing": float,
+    # "All the Levers"
+    "ema_decay": float, "val_split": float, "adaptive_timestep_ratio": float,
+    "warmup_start_factor": float, "cosine_eta_min_ratio": float,
+    "cosine_restarts_count": int, "save_best_every_n_steps": int,
+}
+
+
 PRESET_FIELDS = frozenset([
     # Adapter selection
     "adapter_type",
@@ -144,11 +176,12 @@ PRESET_FIELDS = frozenset([
     "learning_rate", "batch_size", "gradient_accumulation", "epochs",
     "warmup_steps", "max_steps", "weight_decay", "max_grad_norm", "seed",
     "dataset_repeats", "shift", "num_inference_steps",
-    "chunk_duration", "chunk_decay_every",
+    "crop_mode", "chunk_duration", "max_latent_length", "chunk_decay_every",
     "optimizer_type", "scheduler_type", "scheduler_formula",
-    "cfg_ratio", "loss_weighting", "snr_gamma",
+    "timestep_mode", "cfg_ratio", "loss_weighting", "snr_gamma",
     "save_every", "log_every", "log_heavy_every",
     "save_best", "save_best_after", "early_stop_patience",
+    "target_loss", "target_loss_floor", "target_loss_warmup", "target_loss_smoothing",
     "gradient_checkpointing", "gradient_checkpointing_ratio", "offload_encoder",
     # "All the Levers"
     "ema_decay", "val_split", "adaptive_timestep_ratio",
@@ -247,6 +280,7 @@ def list_presets() -> List[Dict[str, Any]]:
             if name in seen_names:
                 continue  # higher-priority version already listed
             seen_names.add(name)
+            data: dict = {}
             try:
                 data = json.loads(fp.read_text(encoding="utf-8"))
                 desc = data.get("description", "")
@@ -257,6 +291,10 @@ def list_presets() -> List[Dict[str, Any]]:
                 "description": desc,
                 "path": str(fp),
                 "builtin": builtin,
+                "adapter_type": data.get("adapter_type", ""),
+                "rank": data.get("rank", ""),
+                "learning_rate": data.get("learning_rate", ""),
+                "epochs": data.get("epochs", ""),
             })
 
     return presets
@@ -285,8 +323,17 @@ def load_preset(name: str) -> Optional[Dict[str, Any]]:
                 _set_last_error(f"Failed to read preset JSON: {exc}")
                 return None
             # Filter to known preset fields only
+            filtered = {k: v for k, v in data.items() if k in PRESET_FIELDS}
+            # Coerce string values to expected numeric types (fixes
+            # presets saved with numbers as JSON strings).
+            for key, expected_type in PRESET_TYPES.items():
+                if key in filtered and not isinstance(filtered[key], expected_type):
+                    try:
+                        filtered[key] = expected_type(filtered[key])
+                    except (ValueError, TypeError):
+                        pass  # leave as-is; ask() will re-prompt
             _set_last_error(None)
-            return {k: v for k, v in data.items() if k in PRESET_FIELDS}
+            return filtered
 
     _set_last_error(f"Preset '{name}' was not found in local/global/built-in directories.")
     return None

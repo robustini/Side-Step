@@ -22,6 +22,22 @@ from sidestep_engine.ui.prompt_helpers import print_message, section
 logger = logging.getLogger(__name__)
 
 
+def _caption_generation_kwargs(values: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for source_key, target_key in (
+        ("_caption_temperature", "temperature"),
+        ("_caption_max_tokens", "max_tokens"),
+        ("_caption_top_p", "top_p"),
+        ("_caption_presence_penalty", "presence_penalty"),
+        ("_caption_frequency_penalty", "frequency_penalty"),
+        ("_caption_repetition_penalty", "repetition_penalty"),
+    ):
+        value = values.get(source_key)
+        if value is not None:
+            result[target_key] = value
+    return result
+
+
 def _resolve_or_prompt(
     existing: Optional[str], label: str, settings_key: str,
 ) -> Optional[str]:
@@ -98,6 +114,7 @@ def build_caption_fn(
     """
     provider = answers.get("caption_provider", "skip")
     key = answers.get("_caption_key")
+    generation_kwargs = _caption_generation_kwargs(answers)
 
     # Local providers don't need an API key
     if provider in ("local_8-10gb", "local_16gb"):
@@ -106,6 +123,10 @@ def build_caption_fn(
         return lambda title, artist, excerpt, audio_path: _local_cap(
             title, artist, audio_path=audio_path, lyrics_excerpt=excerpt,
             tier=tier,
+            max_new_tokens=generation_kwargs.get("max_tokens"),
+            temperature=generation_kwargs.get("temperature"),
+            top_p=generation_kwargs.get("top_p"),
+            repetition_penalty=generation_kwargs.get("repetition_penalty"),
         )
 
     if provider in ("skip", "lyrics_only") or not key:
@@ -117,6 +138,9 @@ def build_caption_fn(
         return lambda title, artist, excerpt, audio_path: generate_caption(
             title, artist, key, audio_path=audio_path, lyrics_excerpt=excerpt,
             model=gemini_model,
+            temperature=generation_kwargs.get("temperature"),
+            max_tokens=generation_kwargs.get("max_tokens"),
+            top_p=generation_kwargs.get("top_p"),
         )
 
     if provider == "openai":
@@ -125,6 +149,11 @@ def build_caption_fn(
             title, artist, key, audio_path=audio_path, lyrics_excerpt=excerpt,
             base_url=answers.get("_openai_base_url"),
             model=answers.get("_openai_model", DEFAULT_OPENAI_MODEL),
+            temperature=generation_kwargs.get("temperature"),
+            max_tokens=generation_kwargs.get("max_tokens"),
+            top_p=generation_kwargs.get("top_p"),
+            presence_penalty=generation_kwargs.get("presence_penalty"),
+            frequency_penalty=generation_kwargs.get("frequency_penalty"),
         )
 
     return None
@@ -136,17 +165,71 @@ def build_lyrics_fn(
     """Build the lyrics fetcher callable from wizard answers.
 
     Args:
-        answers: Wizard answer dict with ``_genius_token``.
+        answers: Wizard answer dict with ``_lyrics_provider`` and
+            provider-specific keys.
 
     Returns:
         A callable ``(artist, title) -> str|None``, or ``None`` if
         lyrics fetching is skipped.
     """
-    token = answers.get("_genius_token")
-    if not token:
+    lyrics_provider = answers.get("_lyrics_provider", "genius")
+
+    if lyrics_provider == "genius":
+        token = answers.get("_genius_token")
+        if not token:
+            return None
+        from sidestep_engine.data.lyrics_provider_genius import fetch_lyrics
+        return lambda artist, title: fetch_lyrics(artist, title, token)
+
+    if lyrics_provider == "transcriber_server":
+        server_url = answers.get("_transcriber_server_url", "")
+        if not server_url:
+            return None
+        from sidestep_engine.data.lyrics_provider_server import fetch_lyrics_from_server
+        return lambda artist, title: fetch_lyrics_from_server(
+            "", server_url=server_url, artist=artist, title=title,
+        )
+
+    if lyrics_provider == "music_flamingo":
+        server_url = answers.get("_music_flamingo_url", "")
+        hf_token = answers.get("_hf_token", "")
+        if not server_url:
+            return None
+        from sidestep_engine.data.lyrics_provider_music_flamingo import fetch_lyrics_from_music_flamingo
+        return lambda artist, title: fetch_lyrics_from_music_flamingo(
+            "", server_url=server_url, artist=artist, title=title,
+            hf_token=hf_token or None,
+        )
+
+    return None
+
+
+def build_metadata_fn(
+    answers: dict,
+) -> Optional[Callable[[Path], Optional[dict]]]:
+    """Build the metadata provider callable from wizard answers.
+
+    Args:
+        answers: Wizard answer dict with ``caption_provider`` and
+            Music Flamingo settings.
+
+    Returns:
+        A callable ``(audio_path) -> dict|None``, or ``None`` if
+        metadata generation is skipped.
+    """
+    provider = answers.get("caption_provider", "skip")
+    if provider != "music_flamingo":
         return None
-    from sidestep_engine.data.lyrics_provider_genius import fetch_lyrics
-    return lambda artist, title: fetch_lyrics(artist, title, token)
+    server_url = answers.get("_music_flamingo_url", "")
+    hf_token = answers.get("_hf_token", "")
+    if not server_url:
+        return None
+    from sidestep_engine.data.metadata_provider_music_flamingo import (
+        fetch_music_flamingo_metadata,
+    )
+    return lambda audio_path: fetch_music_flamingo_metadata(
+        str(audio_path), server_url=server_url, hf_token=hf_token or None,
+    )
 
 
 def build_audio_analyze_fn(
@@ -192,6 +275,7 @@ def run_batch(answers: dict) -> Dict[str, int]:
 
     caption_fn = build_caption_fn(answers)
     lyrics_fn = build_lyrics_fn(answers)
+    metadata_fn = build_metadata_fn(answers)
     audio_analyze_fn = build_audio_analyze_fn(answers)
 
     stats: Dict[str, int] = {"written": 0, "skipped": 0, "failed": 0}
@@ -202,6 +286,7 @@ def run_batch(answers: dict) -> Dict[str, int]:
             default_artist=answers.get("default_artist", ""),
             caption_fn=caption_fn,
             lyrics_fn=lyrics_fn,
+            metadata_fn=metadata_fn,
             audio_analyze_fn=audio_analyze_fn,
             policy=answers.get("policy", "fill_missing"),
         )

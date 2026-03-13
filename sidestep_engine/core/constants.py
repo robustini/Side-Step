@@ -110,7 +110,7 @@ def is_turbo(params: dict) -> bool:
     unknown custom names, falls back to ``num_inference_steps``
     (8 = turbo-style schedule).
     """
-    base = params.get("base_model", params.get("model_variant", "turbo"))
+    base = params.get("base_model", params.get("model_variant", "base"))
     label = base.lower() if isinstance(base, str) else ""
     if "turbo" in label:
         return True

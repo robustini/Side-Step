@@ -1,13 +1,13 @@
 """
 Timestep Sampling and CFG Dropout for ACE-Step Training V2
 
-Provides two sampling strategies:
+Provides two sampling strategies selectable via ``timestep_mode``:
 
-- **Continuous logit-normal** (base/sft): reimplements ``sample_t_r()``
-  from ``modeling_acestep_v15_turbo.py`` lines 169-194.
-- **Discrete 8-step** (turbo): samples uniformly from the turbo
-  ``shift=3.0`` inference schedule so the LoRA trains at exactly the
-  timestep values used during inference.
+- **Continuous logit-normal** (default for all variants): reimplements
+  ``sample_t_r()`` from ``modeling_acestep_v15_turbo.py`` lines 169-194.
+- **Discrete 8-step** (legacy turbo option): samples uniformly from the
+  turbo ``shift=3.0`` inference schedule so the LoRA trains at exactly
+  the timestep values used during inference.
 
 Also provides ``apply_cfg_dropout()`` matching lines 1691-1699 of the
 same file.

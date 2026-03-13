@@ -105,6 +105,10 @@ DEFAULT_SAVE_BEST: bool = True
 DEFAULT_SAVE_BEST_AFTER: int = 200
 DEFAULT_EARLY_STOP_PATIENCE: int = 0
 DEFAULT_STRICT_RESUME: bool = True
+DEFAULT_TARGET_LOSS: float = 0.0
+DEFAULT_TARGET_LOSS_FLOOR: float = 0.01
+DEFAULT_TARGET_LOSS_WARMUP: int = 50
+DEFAULT_TARGET_LOSS_SMOOTHING: float = 0.98
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -120,11 +124,13 @@ DEFAULT_LOG_HEAVY_EVERY: int = 50
 DEFAULT_CFG_RATIO: float = 0.15
 DEFAULT_LOSS_WEIGHTING: str = "none"
 DEFAULT_SNR_GAMMA: float = 5.0
+DEFAULT_TIMESTEP_MODE: str = "continuous"
 
 # ---------------------------------------------------------------------------
-# Chunking
+# Chunking / cropping
 # ---------------------------------------------------------------------------
 
+DEFAULT_MAX_LATENT_LENGTH: int = 0
 DEFAULT_CHUNK_DECAY_EVERY: int = 10
 
 # ---------------------------------------------------------------------------
@@ -152,7 +158,7 @@ DEFAULT_SAVE_BEST_EVERY_N_STEPS: int = 0
 # Model / device
 # ---------------------------------------------------------------------------
 
-DEFAULT_MODEL_VARIANT: str = "turbo"
+DEFAULT_MODEL_VARIANT: str = "base"
 DEFAULT_ADAPTER_TYPE: str = "lora"
 DEFAULT_DEVICE: str = "auto"
 DEFAULT_PRECISION: str = "auto"
@@ -218,6 +224,10 @@ TRAINING_DEFAULTS: dict = {
     "save_best_after": DEFAULT_SAVE_BEST_AFTER,
     "early_stop_patience": DEFAULT_EARLY_STOP_PATIENCE,
     "strict_resume": DEFAULT_STRICT_RESUME,
+    "target_loss": DEFAULT_TARGET_LOSS,
+    "target_loss_floor": DEFAULT_TARGET_LOSS_FLOOR,
+    "target_loss_warmup": DEFAULT_TARGET_LOSS_WARMUP,
+    "target_loss_smoothing": DEFAULT_TARGET_LOSS_SMOOTHING,
     # Logging
     "log_every": DEFAULT_LOG_EVERY,
     "log_heavy_every": DEFAULT_LOG_HEAVY_EVERY,
@@ -225,7 +235,9 @@ TRAINING_DEFAULTS: dict = {
     "cfg_ratio": DEFAULT_CFG_RATIO,
     "loss_weighting": DEFAULT_LOSS_WEIGHTING,
     "snr_gamma": DEFAULT_SNR_GAMMA,
+    "timestep_mode": DEFAULT_TIMESTEP_MODE,
     # Chunking
+    "max_latent_length": DEFAULT_MAX_LATENT_LENGTH,
     "chunk_decay_every": DEFAULT_CHUNK_DECAY_EVERY,
     # DataLoader
     "num_workers": DEFAULT_NUM_WORKERS,
@@ -256,6 +268,10 @@ GUI_KEY_MAP: dict = {
     "grad_accum": "gradient_accumulation",
     "scheduler": "scheduler_type",
     "early_stop": "early_stop_patience",
+    "target-loss": "target_loss",
+    "target-loss-floor": "target_loss_floor",
+    "target-loss-warmup": "target_loss_warmup",
+    "target-loss-smoothing": "target_loss_smoothing",
     "projections": "target_modules",
     "self_projections": "self_target_modules",
     "cross_projections": "cross_target_modules",
@@ -298,6 +314,7 @@ GUI_FIELD_MAP: dict = {
     "optimizer_type": "full-optimizer",
     "scheduler_type": "full-scheduler",
     "scheduler_formula": "full-scheduler-formula",
+    "max_latent_length": "full-max-latent-length",
     "device": "full-device",
     "precision": "full-precision",
     "save_every": "full-save-every",
@@ -306,6 +323,10 @@ GUI_FIELD_MAP: dict = {
     "save_best": "full-save-best",
     "save_best_after": "full-save-best-after",
     "early_stop_patience": "full-early-stop",
+    "target_loss": "full-target-loss",
+    "target_loss_floor": "full-target-loss-floor",
+    "target_loss_warmup": "full-target-loss-warmup",
+    "target_loss_smoothing": "full-target-loss-smoothing",
     "strict_resume": "full-strict-resume",
     "weight_decay": "full-weight-decay",
     "max_grad_norm": "full-max-grad-norm",
@@ -316,6 +337,7 @@ GUI_FIELD_MAP: dict = {
     "cosine_restarts_count": "full-cosine-restarts",
     "ema_decay": "full-ema-decay",
     "val_split": "full-val-split",
+    "timestep_mode": "full-timestep-mode",
     "adaptive_timestep_ratio": "full-adaptive-timestep",
     "save_best_every_n_steps": "full-save-best-every-n-steps",
     "num_workers": "full-num-workers",
@@ -379,9 +401,9 @@ def get_gui_defaults() -> dict:
         else:
             out[field_id] = str(value)
 
-    # -- Model-variant-dependent defaults (turbo is the default variant) ----
-    out["full-shift"] = "3.0"
-    out["full-inference-steps"] = "8"
+    # -- Model-variant-dependent defaults (base is the default variant) -----
+    out["full-shift"] = "1.0"
+    out["full-inference-steps"] = "50"
 
     # -- UI presentation defaults (no backend equivalent) ------------------
     _projs = "q_proj k_proj v_proj o_proj"
@@ -389,10 +411,13 @@ def get_gui_defaults() -> dict:
     out["full-self-projections"] = _projs
     out["full-cross-projections"] = _projs
     out["full-chunk-duration"] = "0"
+    out["full-max-latent-length"] = "0"
+    out["full-crop-mode"] = "full"
 
     # -- Timestep defaults (from model config, not training params) --------
     out["full-timestep-mu"] = "-0.4"
     out["full-timestep-sigma"] = "1.0"
+    out["full-timestep-mode"] = DEFAULT_TIMESTEP_MODE
 
     # -- Empty-string defaults ---------------------------------------------
     out["full-resume-from"] = ""

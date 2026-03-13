@@ -221,6 +221,55 @@ const Reactivity = (() => {
     formulaInput.addEventListener('change', check);
   }
 
+  // ---- Cruise Warmup ↔ Scheduler Warmup Link -----------------------------
+
+  function initCruiseWarmupLink() {
+    const warmupEl = $('full-warmup');
+    const cruiseEl = $('full-target-loss-warmup');
+    if (!warmupEl || !cruiseEl) return;
+
+    let _userCruiseVal = cruiseEl.value;  // remember user's custom value
+
+    function sync() {
+      const warmupSteps = parseInt(warmupEl.value, 10) || 0;
+      const cruiseGroup = cruiseEl.closest('.form-group');
+
+      if (warmupSteps > 0) {
+        // Enforce min: cruise warmup must be >= scheduler warmup
+        const curCruise = parseInt(cruiseEl.value, 10) || 0;
+        if (curCruise < warmupSteps) {
+          cruiseEl.value = warmupSteps;
+          cruiseEl.dispatchEvent(new Event('input'));
+        }
+        cruiseEl.min = warmupSteps;
+        _setLocked(cruiseGroup, true, 'Min: warmup steps');
+        _showWarning('warn-cruise-warmup',
+          'Cruise warmup locked to \u2265 ' + warmupSteps + ' (scheduler warmup steps).');
+      } else {
+        // No scheduler warmup — cruise warmup is free
+        cruiseEl.min = 0;
+        _setLocked(cruiseGroup, false);
+        _showWarning('warn-cruise-warmup', '');
+      }
+    }
+
+    // Also enforce on cruise input (can't go below scheduler warmup)
+    cruiseEl.addEventListener('input', () => {
+      const warmupSteps = parseInt(warmupEl.value, 10) || 0;
+      if (warmupSteps > 0) {
+        const v = parseInt(cruiseEl.value, 10) || 0;
+        if (v < warmupSteps) {
+          cruiseEl.value = warmupSteps;
+        }
+      }
+    });
+
+    warmupEl.addEventListener('input', sync);
+    warmupEl.addEventListener('change', sync);
+    // Initial sync on load
+    setTimeout(sync, 150);
+  }
+
   // ---- Smart Defaults Fix -------------------------------------------------
 
   function initSmartDefaultsFix() {
@@ -288,6 +337,7 @@ const Reactivity = (() => {
     initPPAdapterLock();
     initResumeWarmupZero();
     initSchedulerSafety();
+    initCruiseWarmupLink();
     initSmartDefaultsFix();
     initTimestepWarning();
     if (typeof ReactivityExt !== 'undefined') ReactivityExt.init();

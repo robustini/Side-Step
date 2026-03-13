@@ -22,7 +22,7 @@ from sidestep_engine.ui.prompt_helpers import _esc, print_message
 # These mirror the argparse defaults in cli/args.py.
 _DEFAULTS: Dict[str, Any] = {
     # Model
-    "model_variant": "turbo",
+    "model_variant": "base",
     "checkpoint_dir": "./checkpoints",
     "adapter_type": "lora",
     # Device

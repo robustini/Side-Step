@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain } = require("electron");
+const { app, BrowserWindow, Menu, Notification, ipcMain } = require("electron");
 const path = require("path");
 
 function argVal(name) {
@@ -25,6 +25,15 @@ if (process.platform === "linux") {
 Menu.setApplicationMenu(null);
 
 ipcMain.handle("get-token", () => authToken);
+ipcMain.handle("notify", (_e, payload) => {
+  const title = String(payload?.title || "Side-Step");
+  const body = String(payload?.body || "");
+  if (!Notification.isSupported()) return { ok: false, error: "unsupported" };
+  const icon = resolveIcon();
+  const notification = new Notification({ title, body, icon, silent: false });
+  notification.show();
+  return { ok: true };
+});
 ipcMain.on("boot-error", (_e, msg) => {
   console.error("[Side-Step] Boot error:", msg);
 });
@@ -61,12 +70,58 @@ app.whenReady().then(() => {
   });
 
   const sep = serverUrl.includes("?") ? "&" : "?";
-  win.loadURL(`${serverUrl}${sep}token=${authToken}`);
+  const appURL = `${serverUrl}${sep}token=${authToken}`;
+  win.loadURL(appURL);
   win.maximize();
 
   win.webContents.on("did-finish-load", () => {
     win.focus();
     win.webContents.focus();
+  });
+
+  win.webContents.on("did-start-navigation", (_e, url, isInPlace, isMainFrame) => {
+    if (isMainFrame) {
+      console.error("[Side-Step] did-start-navigation:", { url, isInPlace, isMainFrame });
+    }
+  });
+  win.webContents.on("did-navigate", (_e, url) => {
+    console.error("[Side-Step] did-navigate:", url);
+  });
+  win.webContents.on("did-navigate-in-page", (_e, url, isMainFrame) => {
+    if (isMainFrame) {
+      console.error("[Side-Step] did-navigate-in-page:", url);
+    }
+  });
+
+  // ── Prevent the renderer from navigating away (blank-page guard) ──
+  win.webContents.on("will-navigate", (e, url) => {
+    const dest = new URL(url);
+    const home = new URL(appURL);
+    const sameDocument =
+      dest.origin === home.origin &&
+      dest.pathname === home.pathname &&
+      dest.search === home.search;
+    if (!sameDocument) {
+      console.error("[Side-Step] blocked will-navigate:", url);
+      e.preventDefault();
+    }
+  });
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+
+  // ── DevTools shortcut (F12 or Ctrl+Shift+I) ──
+  win.webContents.on("before-input-event", (_e, input) => {
+    if (
+      input.type === "keyDown" &&
+      (input.key === "F12" ||
+        (input.key === "I" && input.control && input.shift))
+    ) {
+      win.webContents.toggleDevTools();
+    }
+  });
+
+  // ── Renderer crash detection ──
+  win.webContents.on("render-process-gone", (_e, details) => {
+    console.error("[Side-Step] Renderer crashed:", details.reason, details.exitCode);
   });
 
   // Custom close flow: ask the renderer to show an in-app modal instead of

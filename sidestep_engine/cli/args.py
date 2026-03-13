@@ -17,12 +17,17 @@ from sidestep_engine.training_defaults import (
     DEFAULT_BIAS,
     DEFAULT_CFG_RATIO,
     DEFAULT_CHUNK_DECAY_EVERY,
+    DEFAULT_MAX_LATENT_LENGTH,
     DEFAULT_COSINE_ETA_MIN_RATIO,
     DEFAULT_COSINE_RESTARTS_COUNT,
     DEFAULT_DATASET_REPEATS,
     DEFAULT_DROPOUT,
     DEFAULT_EARLY_STOP_PATIENCE,
     DEFAULT_EMA_DECAY,
+    DEFAULT_TARGET_LOSS,
+    DEFAULT_TARGET_LOSS_FLOOR,
+    DEFAULT_TARGET_LOSS_WARMUP,
+    DEFAULT_TARGET_LOSS_SMOOTHING,
     DEFAULT_EPOCHS,
     DEFAULT_GRADIENT_ACCUMULATION,
     DEFAULT_GRADIENT_CHECKPOINTING_RATIO,
@@ -39,6 +44,7 @@ from sidestep_engine.training_defaults import (
     DEFAULT_LOSS_WEIGHTING,
     DEFAULT_MAX_GRAD_NORM,
     DEFAULT_MAX_STEPS,
+    DEFAULT_MODEL_VARIANT,
     DEFAULT_NUM_WORKERS as _DEFAULT_NUM_WORKERS,
     DEFAULT_OFT_BLOCK_SIZE,
     DEFAULT_OFT_EPS,
@@ -54,6 +60,7 @@ from sidestep_engine.training_defaults import (
     DEFAULT_WARMUP_START_FACTOR,
     DEFAULT_WARMUP_STEPS,
     DEFAULT_WEIGHT_DECAY,
+    DEFAULT_TIMESTEP_MODE,
     DEFAULT_ADAPTIVE_TIMESTEP_RATIO,
     DEFAULT_VAL_SPLIT,
 )
@@ -329,12 +336,12 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
     g.add_argument(
         "--model", "-M", "--model-variant",
         type=str,
-        default="turbo",
+        default=DEFAULT_MODEL_VARIANT,
         dest="model_variant",
         metavar="MODEL",
         help=(
-            "Model variant or subfolder name (default: turbo). "
-            "Official: turbo, base, sft. "
+            f"Model variant or subfolder name (default: {DEFAULT_MODEL_VARIANT}). "
+            "Official: base, sft, turbo. "
             "For fine-tunes: use the exact folder name under checkpoint-dir."
         ),
     )
@@ -413,6 +420,8 @@ def _add_common_training_args(parser: argparse.ArgumentParser) -> None:
                               "may reduce training quality for full-length inference")
     g_train.add_argument("--chunk-decay-every", type=int, default=DEFAULT_CHUNK_DECAY_EVERY,
                          help=f"Epoch interval for halving chunk coverage histogram; 0 disables decay (default: {DEFAULT_CHUNK_DECAY_EVERY})")
+    g_train.add_argument("--max-latent-length", type=int, default=None,
+                         help="Random crop length in latent frames (0 = disabled). Takes precedence over --chunk-duration when > 0")
     g_train.add_argument("--max-steps", "-m", type=int, default=DEFAULT_MAX_STEPS,
                          help=f"Maximum optimizer steps; 0 = use epochs only (default: {DEFAULT_MAX_STEPS})")
     g_train.add_argument("--shift", type=float, default=None, help=argparse.SUPPRESS)
@@ -496,6 +505,22 @@ def _add_common_training_args(parser: argparse.ArgumentParser) -> None:
                          help=f"Epoch to start best-model tracking (default: {DEFAULT_SAVE_BEST_AFTER})")
     g_ckpt.add_argument("--early-stop-patience", type=int, default=DEFAULT_EARLY_STOP_PATIENCE,
                          help=f"Stop if no improvement for N epochs; 0=disabled (default: {DEFAULT_EARLY_STOP_PATIENCE})")
+    g_ckpt.add_argument("--target-loss", type=float, default=DEFAULT_TARGET_LOSS,
+                         dest="target_loss",
+                         help=f"Target loss cruise control (0=disabled). Damps LR as smoothed loss "
+                              f"approaches this value so training holds steady. (default: {DEFAULT_TARGET_LOSS})")
+    g_ckpt.add_argument("--target-loss-floor", type=float, default=DEFAULT_TARGET_LOSS_FLOOR,
+                         dest="target_loss_floor",
+                         help=f"Min LR multiplier at target loss; 0.01=1%% of scheduled LR "
+                              f"(default: {DEFAULT_TARGET_LOSS_FLOOR})")
+    g_ckpt.add_argument("--target-loss-warmup", type=int, default=DEFAULT_TARGET_LOSS_WARMUP,
+                         dest="target_loss_warmup",
+                         help=f"Min steps before cruise control engages "
+                              f"(default: {DEFAULT_TARGET_LOSS_WARMUP})")
+    g_ckpt.add_argument("--target-loss-smoothing", type=float, default=DEFAULT_TARGET_LOSS_SMOOTHING,
+                         dest="target_loss_smoothing",
+                         help=f"EMA beta for loss smoothing in cruise control; higher=smoother "
+                              f"(default: {DEFAULT_TARGET_LOSS_SMOOTHING})")
 
     # -- Logging / TensorBoard -----------------------------------------------
     g_log = parser.add_argument_group("Logging / TensorBoard")
@@ -524,6 +549,9 @@ def _add_common_training_args(parser: argparse.ArgumentParser) -> None:
 def _add_train_args(parser: argparse.ArgumentParser) -> None:
     """Add arguments specific to the train subcommand."""
     g = parser.add_argument_group("Training (advanced)")
+    g.add_argument("--timestep-mode", type=str, default=DEFAULT_TIMESTEP_MODE, choices=["continuous", "discrete"],
+                   dest="timestep_mode",
+                   help=f"Timestep sampling: 'continuous' (logit-normal, recommended) or 'discrete' (8-step turbo schedule). (default: {DEFAULT_TIMESTEP_MODE})")
     g.add_argument("--cfg-ratio", type=float, default=DEFAULT_CFG_RATIO, help=f"CFG dropout probability (default: {DEFAULT_CFG_RATIO})")
     g.add_argument("--loss-weighting", type=str, default=DEFAULT_LOSS_WEIGHTING, choices=["none", "min_snr"],
                    help=f"Loss weighting: 'none' (flat MSE) or 'min_snr' (can yield better results on SFT/base, default: {DEFAULT_LOSS_WEIGHTING})")
@@ -618,8 +646,8 @@ def _add_captions_args(parser: argparse.ArgumentParser) -> None:
     )
     g.add_argument(
         "--provider", type=str, default=None,
-        choices=["gemini", "openai", "local_8-10gb", "local_16gb"],
-        help="Caption provider: gemini, openai, local_8-10gb, local_16gb (default: from settings, or gemini)",
+        choices=["gemini", "openai", "local_8-10gb", "local_16gb", "music_flamingo", "lyrics_only", "none"],
+        help="Caption provider: gemini, openai, local_8-10gb, local_16gb, music_flamingo, lyrics_only, none (default: from settings, or gemini)",
     )
     g.add_argument(
         "--ai-model", "--model", type=str, default=None, dest="ai_model",
@@ -631,9 +659,20 @@ def _add_captions_args(parser: argparse.ArgumentParser) -> None:
         help="Merge policy for existing sidecars (default: fill_missing)",
     )
     g.add_argument(
+        "--lyrics-provider", type=str, default=None,
+        choices=["genius", "transcriber_server", "music_flamingo", "none"],
+        help="Lyrics provider: genius, transcriber_server, music_flamingo, none "
+             "(default: genius when --lyrics is on)",
+    )
+    g.add_argument(
         "--lyrics", action=argparse.BooleanOptionalAction, default=True,
-        help="Fetch lyrics from Genius (requires GENIUS_API_TOKEN or settings). "
+        help="Fetch lyrics (requires provider config). "
              "On by default; use --no-lyrics to skip",
+    )
+    g.add_argument(
+        "--metadata-provider", type=str, default=None,
+        choices=["music_flamingo", "none"],
+        help="Metadata provider for structured fields: music_flamingo, none (default: none)",
     )
     g.add_argument(
         "--default-artist", type=str, default="",
@@ -654,6 +693,23 @@ def _add_captions_args(parser: argparse.ArgumentParser) -> None:
     g.add_argument(
         "--genius-token", type=str, default=None,
         help="Genius API token (overrides env/settings)",
+    )
+    g.add_argument(
+        "--music-flamingo-url", type=str, default=None,
+        help="Music Flamingo server URL (overrides settings)",
+    )
+    g.add_argument(
+        "--transcriber-server-url", type=str, default=None,
+        help="Transcriber Server URL for lyrics (overrides settings)",
+    )
+    g.add_argument(
+        "--hf-token", type=str, default=None,
+        help="Hugging Face token for authenticated endpoints (overrides settings)",
+    )
+    g.add_argument(
+        "--google-search", action="store_true", default=False,
+        help="Enable Grounding with Google Search for Gemini captions "
+             "(lets the model look up track info online; adds per-query cost)",
     )
 
 
