@@ -10,6 +10,7 @@ Manages long-running operations:
 
 from __future__ import annotations
 
+import glob
 import json
 import logging
 import math
@@ -252,6 +253,13 @@ class TaskManager:
         if task.progress_file:
             threading.Thread(target=self._tail_progress, args=(task,), daemon=True).start()
 
+        # Start tfevents reader thread for richer scalar data
+        log_dir = self._resolve_tb_log_dir(config)
+        if log_dir:
+            threading.Thread(
+                target=self._tail_tfevents, args=(task, log_dir), daemon=True
+            ).start()
+
         return {"ok": True, "task_id": task_id}
 
     def stop_training(self) -> Dict[str, Any]:
@@ -438,6 +446,221 @@ class TaskManager:
                         time.sleep(0.2)  # second pass catches late flushes
         except OSError:
             pass
+
+    # ==================================================================
+    # TensorBoard tfevents live reader
+    # ==================================================================
+
+    @staticmethod
+    def _resolve_tb_log_dir(config: Dict[str, Any]) -> Optional[Path]:
+        """Best-effort resolve of the TensorBoard log directory from config.
+
+        Checks multiple candidate paths and returns the first that either
+        already contains a tfevents file or is the most likely location.
+        TensorBoard's SummaryWriter creates ``{run_name}_v0`` directories,
+        so we also check for those.
+        """
+        output_dir = config.get("output_dir", "")
+        run_name = config.get("run_name", "")
+        log_dir_str = config.get("log_dir", "")
+        if not output_dir:
+            return None
+        out = (_PROJECT_ROOT / output_dir).resolve()
+
+        # Build candidate list, most-specific first
+        candidates: list[Path] = []
+        if log_dir_str and str(log_dir_str).strip():
+            log_root = (_PROJECT_ROOT / log_dir_str).resolve()
+        else:
+            # Default matches config_factory default: log_dir="runs" relative to CWD
+            log_root = (_PROJECT_ROOT / "runs").resolve()
+
+        # TensorBoard appends _v0, _v1, ... — check for exact run dirs
+        if run_name:
+            candidates.insert(0, log_root / run_name)
+            # Also probe versioned variants
+            for suffix in ("_v0", "_v1", "_v2"):
+                versioned = log_root / (run_name + suffix)
+                if versioned.is_dir():
+                    candidates.insert(0, versioned)
+        candidates.append(log_root)
+
+        # Return first candidate that already has a tfevents file
+        for c in candidates:
+            if c.is_dir() and glob.glob(str(c / "events.out.tfevents.*")):
+                logger.info("[tfevents] Found existing log dir: %s", c)
+                return c
+        # Otherwise return most specific candidate (it may appear later)
+        result = candidates[0] if candidates else None
+        logger.info("[tfevents] Will watch log dir: %s", result)
+        return result
+
+    def _tail_tfevents(self, task: Task, log_dir: Path) -> None:
+        """Poll tfevents files via EventAccumulator and push scalar data."""
+        try:
+            from tensorboard.backend.event_processing.event_accumulator import (
+                EventAccumulator,
+            )
+        except ImportError:
+            logger.warning("[tfevents] tensorboard package not installed, skipping live reader")
+            return
+
+        logger.info("[tfevents] Waiting for tfevents in %s ...", log_dir)
+        start_ts = task.started_at  # only consider files from this run
+
+        # Directories to search: the resolved dir itself, plus its parent
+        # (handles the case where resolved = runs/run_name but TB creates runs/run_name_v0)
+        search_dirs = [log_dir]
+        if log_dir.parent != log_dir:
+            search_dirs.append(log_dir.parent)
+
+        actual_dir = log_dir
+        for attempt in range(120):
+            if task.status != "running":
+                return
+            for sdir in search_dirs:
+                if not sdir.is_dir():
+                    continue
+                # Check direct path first
+                hits = glob.glob(str(sdir / "events.out.tfevents.*"))
+                if hits:
+                    recent = [h for h in hits if os.path.getmtime(h) >= start_ts - 5]
+                    if recent:
+                        actual_dir = sdir
+                        break
+                    if attempt >= 10:
+                        actual_dir = sdir
+                        break
+                # Search subdirectories (handles versioned dirs like run_name_v0)
+                hits = glob.glob(str(sdir / "**" / "events.out.tfevents.*"), recursive=True)
+                if hits:
+                    recent = [h for h in hits if os.path.getmtime(h) >= start_ts - 5]
+                    if recent:
+                        newest = max(recent, key=lambda p: os.path.getmtime(p))
+                        actual_dir = Path(newest).parent
+                        break
+                    if attempt >= 10:
+                        newest = max(hits, key=lambda p: os.path.getmtime(p))
+                        actual_dir = Path(newest).parent
+                        break
+            else:
+                # Inner loop didn't break — no hits yet, keep waiting
+                if attempt % 15 == 14:
+                    logger.debug("[tfevents] Still waiting for tfevents in %s (attempt %d)", log_dir, attempt + 1)
+                time.sleep(2)
+                continue
+            break  # inner for-else broke — we found something
+        else:
+            logger.warning("[tfevents] No tfevents file found in %s after 240s", log_dir)
+            return
+
+        logger.info("[tfevents] Found tfevents in %s, starting live reader", actual_dir)
+        from tensorboard.backend.event_processing.event_accumulator import (
+            HISTOGRAMS,
+            SCALARS,
+        )
+        # Silence TB's "No path found" INFO spam — TB uses a shared "tensorboard"
+        # logger via tb_logging.get_logger(), not per-module __name__ loggers.
+        logging.getLogger("tensorboard").setLevel(logging.WARNING)
+        size_guidance = {SCALARS: 0, HISTOGRAMS: 500}
+        ea = EventAccumulator(str(actual_dir), size_guidance=size_guidance)
+        ea.Reload()
+
+        # Block per-layer grad norms (too many tags, noisy); forward everything else
+        _BLOCKED_SCALAR_PREFIXES = ("grad_norm/",)
+        _WANTED_HISTOGRAM_TAGS = {
+            "train/timestep_distribution",
+        }
+        # Track how many events we've already sent per tag
+        sent_counts: Dict[str, int] = {}
+        hist_sent_counts: Dict[str, int] = {}
+
+        def _enqueue(msg: dict) -> None:
+            try:
+                self._training_queue.put_nowait(msg)
+            except queue.Full:
+                try:
+                    self._training_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    self._training_queue.put_nowait(msg)
+                except queue.Full:
+                    pass
+
+        while task.status == "running":
+            time.sleep(3)  # poll interval
+            try:
+                ea.Reload()
+            except Exception:
+                continue
+
+            # ---- Scalars (forward ALL except blocked prefixes) ----
+            try:
+                available_tags = set(ea.Tags().get("scalars", []))
+            except Exception:
+                available_tags = set()
+
+            for tag in available_tags:
+                if any(tag.startswith(p) for p in _BLOCKED_SCALAR_PREFIXES):
+                    continue
+                try:
+                    events = ea.Scalars(tag)
+                except Exception:
+                    continue
+                prev = sent_counts.get(tag, 0)
+                if len(events) <= prev:
+                    continue
+                new_events = events[prev:]
+                sent_counts[tag] = len(events)
+                for ev in new_events:
+                    _enqueue({
+                        "type": "tb_scalar",
+                        "tag": tag,
+                        "step": ev.step,
+                        "value": ev.value,
+                        "wall_time": ev.wall_time,
+                    })
+
+            # ---- Histograms ----
+            try:
+                hist_tags = set(ea.Tags().get("histograms", []))
+            except Exception:
+                hist_tags = set()
+
+            # Accept wanted histogram tags + any params/* tag
+            for tag in hist_tags:
+                if tag not in _WANTED_HISTOGRAM_TAGS and not tag.startswith("params/"):
+                    continue
+                try:
+                    events = ea.Histograms(tag)
+                except Exception:
+                    continue
+                prev = hist_sent_counts.get(tag, 0)
+                if len(events) <= prev:
+                    continue
+                new_events = events[prev:]
+                hist_sent_counts[tag] = len(events)
+                for ev in new_events:
+                    # ev.histogram_value has bucket_limit and bucket fields
+                    hv = ev.histogram_value
+                    bins = []
+                    limits = list(hv.bucket_limit)
+                    counts = list(hv.bucket)
+                    for i, count in enumerate(counts):
+                        if count <= 0:
+                            continue
+                        x = limits[i - 1] if i > 0 else (limits[0] - (limits[1] - limits[0]) if len(limits) > 1 else limits[0] - 1)
+                        dx = limits[i] - x if i < len(limits) else 1.0
+                        bins.append({"x": float(x), "dx": float(dx), "y": float(count)})
+                    if bins:
+                        _enqueue({
+                            "type": "tb_histogram",
+                            "tag": tag,
+                            "step": ev.step,
+                            "wall_time": ev.wall_time,
+                            "bins": bins,
+                        })
 
     # ==================================================================
     # In-process tasks (preprocess, PP++, captions)
