@@ -35,3 +35,7 @@ uv.lock
 
 # Stale duplicate preset directory (use assets/presets/ instead)
 presets/
+
+# Vendored TensorBoard source and downloaded HTML references
+assets/tensorboard/
+assets/*.html
