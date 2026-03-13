@@ -2052,8 +2052,10 @@
                 <select class="select" id="caption-provider">
                   <option value="gemini" selected>Gemini</option>
                   <option value="openai">OpenAI / Compatible</option>
+                  <option value="music_flamingo">Music Flamingo</option>
                   <option value="local_8-10gb">Local 8-10GB (Qwen2.5-Omni 4-bit)</option>
                   <option value="local_16gb">Local 16GB+ (Qwen2.5-Omni bf16)</option>
+                  <option value="none">None (lyrics / enrichment only)</option>
                   <option value="lyrics_only">Lyrics only</option>
                 </select>
               </div>
@@ -2062,8 +2064,22 @@
                 <select class="select" id="caption-overwrite">
                   <option value="fill_missing" selected>Fill missing only</option>
                   <option value="overwrite_caption">Overwrite captions only</option>
+                  <option value="overwrite_lyrics">Overwrite lyrics only</option>
                   <option value="overwrite_all">Overwrite all fields</option>
                 </select>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group" style="flex: 1;">
+                <label class="form-group__label">Lyrics Provider</label>
+                <select class="select" id="caption-lyrics-provider">
+                  <option value="" selected>None (captions only)</option>
+                  <option value="genius">Genius</option>
+                  <option value="transcriber_server">Transcriber Server</option>
+                  <option value="music_flamingo">Music Flamingo</option>
+                </select>
+                <div class="hint">Use this when you want lyrics fetched alongside captions, or set Caption Provider to None / Lyrics only.</div>
               </div>
             </div>
 
@@ -2674,6 +2690,21 @@
         <label class="form-group__label">Genius API Token</label>
         <input class="input" type="password" id="settings-genius-token" placeholder="Not set">
         <div class="hint">For automatic lyrics fetching</div>
+      </div>
+      <div class="form-group">
+        <label class="form-group__label">Transcriber Server URL</label>
+        <input class="input" type="text" id="settings-transcriber-server-url" placeholder="http://127.0.0.1:7860">
+        <div class="hint">Used when Lyrics Provider is set to Transcriber Server.</div>
+      </div>
+      <div class="form-group">
+        <label class="form-group__label">Music Flamingo URL</label>
+        <input class="input" type="text" id="settings-music-flamingo-url" placeholder="http://127.0.0.1:7860">
+        <div class="hint">Used for Music Flamingo metadata generation and optional lyrics extraction.</div>
+      </div>
+      <div class="form-group">
+        <label class="form-group__label">Hugging Face Token</label>
+        <input class="input" type="password" id="settings-hf-token" placeholder="Not set">
+        <div class="hint">Optional for public local instances, required for gated or private Hugging Face Spaces.</div>
       </div>
 
       <div class="section-header" id="settings-visual-section" style="display:none;">Visual</div>
